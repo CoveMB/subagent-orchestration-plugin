@@ -1,0 +1,20 @@
+{
+  "name": "local-repo-codex-plugins",
+  "interface": {
+    "displayName": "Local Repo Codex Plugins"
+  },
+  "plugins": [
+    {
+      "name": "subagent-orchestrator",
+      "source": {
+        "source": "local",
+        "path": "./plugins/subagent-orchestrator"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

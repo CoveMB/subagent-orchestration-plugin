@@ -1,0 +1,11 @@
+# Add or merge into ~/.codex/config.toml
+# Adjust the python path if your Codex runtime uses a different interpreter.
+[features]
+codex_hooks = true
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "python3 ~/.codex/hooks/subagent_orchestration_gate.py"
+timeout = 5
+statusMessage = "Evaluating subagent orchestration"

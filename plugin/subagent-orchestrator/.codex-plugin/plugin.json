@@ -1,0 +1,23 @@
+{
+  "name": "subagent-orchestrator",
+  "version": "0.2.0",
+  "description": "Superpowers-style Codex orchestration gate: evaluate every prompt for single-thread, sequential, or parallel subagent execution.",
+  "author": {
+    "name": "Cove / local starter kit"
+  },
+  "license": "MIT",
+  "keywords": ["subagents", "orchestration", "skills", "codex", "superpowers-style"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Subagent Orchestrator",
+    "shortDescription": "Evaluate whether prompts need subagent orchestration before work begins.",
+    "longDescription": "A lightweight orchestration gate plus bootstrap skill for Codex. It mirrors the Superpowers pattern by checking process skills before substantive work, while avoiding subagents for simple tasks.",
+    "developerName": "Local starter kit",
+    "category": "Coding",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Use the subagent orchestration gate first, then proceed.",
+      "Evaluate whether this task should be single-thread, sequential, or parallel subagents."
+    ]
+  }
+}

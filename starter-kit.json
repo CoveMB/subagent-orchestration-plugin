@@ -1,0 +1,19 @@
+{
+  "name": "subagent-orchestration-codex-starter",
+  "version": "0.2.0",
+  "created_for": "Codex app/CLI/IDE users who want a pre-task orchestration gate",
+  "components": [
+    "Codex plugin containing subagent-orchestrator skill",
+    "Direct skill install path",
+    "UserPromptSubmit hook",
+    "AGENTS.md snippet",
+    "Custom agent TOMLs",
+    "Config snippets",
+    "Local marketplace examples"
+  ],
+  "description": "Superpowers-style subagent orchestration gate for Codex prompts.",
+  "skills": [
+    "using-subagent-orchestrator",
+    "subagent-orchestrator"
+  ]
+}

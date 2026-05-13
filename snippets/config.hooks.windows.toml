@@ -1,0 +1,11 @@
+# Add or merge into %USERPROFILE%\.codex\config.toml
+# Adjust the python path if needed.
+[features]
+codex_hooks = true
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "python %USERPROFILE%\.codex\hooks\subagent_orchestration_gate.py"
+timeout = 5
+statusMessage = "Evaluating subagent orchestration"

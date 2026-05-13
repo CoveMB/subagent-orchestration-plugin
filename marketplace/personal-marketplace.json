@@ -1,0 +1,20 @@
+{
+  "name": "local-personal-codex-plugins",
+  "interface": {
+    "displayName": "Local Personal Codex Plugins"
+  },
+  "plugins": [
+    {
+      "name": "subagent-orchestrator",
+      "source": {
+        "source": "local",
+        "path": "./.codex/plugins/subagent-orchestrator"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
