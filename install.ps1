@@ -1,12 +1,12 @@
 param(
-    [switch]$Plugin,
-    [switch]$PatchConfig,
-    [switch]$NoPatchConfig
+    [switch]$SkillsOnly,
+    [switch]$WithHook,
+    [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 $argsList = @("scripts/install_user.py")
-if ($Plugin) { $argsList += "--plugin" }
-if ($PatchConfig) { $argsList += "--patch-config" }
-if ($NoPatchConfig) { $argsList += "--no-patch-config" }
+if ($SkillsOnly) { $argsList += "--skills-only" }
+if ($WithHook) { $argsList += "--with-hook" }
+if ($DryRun) { $argsList += "--dry-run" }
 python @argsList

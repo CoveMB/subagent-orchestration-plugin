@@ -1,13 +1,21 @@
 ---
 name: using-subagent-orchestrator
-description: Use when starting any Codex conversation or task to decide whether the subagent-orchestrator skill should be applied before work. This is a lightweight bootstrap skill similar to Superpowers using-superpowers: it checks whether orchestration, process, or subagent skills should be used before substantive action. Skip when already running as a dispatched subagent, when the user explicitly requested no orchestration, or when the task is obviously tiny.
+description: Optional legacy compatibility gate for deciding whether the subagent-orchestrator execution-shape helper should be applied. Use only when explicitly invoked, when a quiet hook hint selects it, or for clearly complex work not already covered by existing orchestration, routing, bootstrap, skill-selection, or agent-management frameworks. Skip for child subagent tasks, explicit opt-outs, simple/default work, and any task already governed by another orchestration system.
 ---
 
 # Using Subagent Orchestrator
 
-This skill is a lightweight bootstrap gate. Its job is to decide whether to load and follow `subagent-orchestrator` before work begins.
+This skill is a lightweight compatibility gate. Its job is to decide whether to load and follow `subagent-orchestrator` only when doing so complements existing workflow systems.
 
-It must **not** force parallel agents by default. It only forces the evaluation.
+It is not a global bootstrap skill. It must not force evaluation or parallel agents by default.
+
+## Host project boundary
+
+- This skill is an execution-shape helper only.
+- It must not override user instructions, repository AGENTS.md, source-of-truth rules, citation rules, manuscript rules, test/check rules, safety rules, privacy/release rules, vendor rules, approval rules, local scripts, or audit requirements.
+- When host repository rules are stricter than plugin guidance, host repository rules win.
+- Subagent output is a work product, not evidence by itself.
+- If a host project requires evidence, citations, tests, approvals, locators, or audit notes, subagent output is not a substitute for those requirements.
 
 ## Priority
 
@@ -15,9 +23,24 @@ User instructions are highest priority. If the user explicitly says not to use s
 
 If this session is already a bounded dispatched subagent task, do not recursively orchestrate unless the parent explicitly asked for it.
 
+Existing orchestration, routing, bootstrap, skill-selection, and agent-management frameworks take priority. Use `subagent-orchestrator` only as a complement or fallback.
+
+The user has standing authorization for bounded delegation when the internal decision is `parallel-subagents`, but only inside active user and repository approval rules. Do not ask for separate authorization before bounded delegation unless host rules, user instructions, safety policy, privacy rules, vendor rules, or the action itself require approval; define clear boundaries instead.
+
+## Boundary check
+
+Before invoking `subagent-orchestrator`:
+
+- check whether the active repository has AGENTS.md or other project instructions,
+- keep those instructions above this skill,
+- remember that host repository rules win,
+- respect explicit user opt-outs,
+- avoid recursive orchestration inside dispatched subagents,
+- use this bootstrap only to decide whether orchestration should be evaluated.
+
 ## First step
 
-Before substantive work, briefly classify the prompt:
+If this skill is explicitly invoked or selected by a quiet hook hint, classify the prompt internally:
 
 ```text
 Orchestration gate: skip | check | use-subagent-orchestrator
@@ -29,6 +52,9 @@ Use:
 - `skip` for tiny edits, simple Q&A, direct one-file tasks, or explicit user opt-out.
 - `check` for moderate uncertainty where a short local evaluation is enough.
 - `use-subagent-orchestrator` for complex debugging, multi-file work, PR review, refactors, migrations, architecture exploration, performance/security work, broad tests, unfamiliar APIs, or tasks with separable research/review/testing tracks.
+
+Do not ask the user whether orchestration is preferable. Decide internally.
+Do not print this gate for simple/default prompts.
 
 ## If `use-subagent-orchestrator`
 

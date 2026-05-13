@@ -1,17 +1,62 @@
 ---
 name: subagent-orchestrator
-description: Evaluate whether a Codex task should use single-thread execution, a sequential plan, or parallel subagents before work begins. Use for complex debugging, PR review, refactors, multi-file changes, architecture exploration, tests, security review, performance issues, unfamiliar APIs, docs/version verification, flaky failures, migrations, ambiguous implementation tasks, and prompts where parallel investigation could improve reliability or reduce context noise. Do not use for tiny edits, simple Q&A, one obvious single-file fixes, or strictly sequential tasks.
+description: Optional execution-shape helper for deciding whether a Codex task should use single-thread execution, a sequential plan, or bounded parallel subagents. Use only for explicit subagent/orchestration requests or clearly complex work after existing orchestration, routing, bootstrap, skill-selection, or agent-management frameworks have priority. Do not use for tiny edits, simple Q&A, one obvious single-file fixes, strictly sequential tasks, or child subagent tasks.
 ---
 
 # Subagent Orchestrator
 
-Use this skill before substantive work when the prompt may benefit from parallel delegation. It can be invoked directly, selected implicitly from its description, or reached through the `using-subagent-orchestrator` bootstrap skill / UserPromptSubmit hook.
+Use this skill only when the prompt explicitly requests subagents/orchestration or when clearly complex work may benefit from parallel delegation. It can be invoked directly or reached through a quiet UserPromptSubmit hint.
+
+This is not a global bootstrap skill and not a replacement for any other process-skill, bootstrap, routing, skill-selection, or agent-management flow. Existing frameworks take priority. Use this skill only as a complement or fallback.
 
 The goal is not to spawn agents by default. The goal is to choose the smallest execution shape that is likely to improve correctness, evidence quality, speed, or context hygiene.
 
-## Required first decision
+## Host project boundary
 
-Before substantive work, classify the task as exactly one of:
+- This skill is an execution-shape helper only.
+- It may organize work, separate investigation tracks, reduce context noise, and improve review coverage.
+- It must not decide research truth, source validity, citation validity, manuscript truth, test sufficiency, safety approval, or vendor trust.
+- It must not override repository AGENTS.md or other host project instructions.
+- When host repository rules are stricter than plugin guidance, host repository rules win.
+- If a host project requires evidence, citations, tests, approvals, locators, or audit notes, subagent output is not a substitute for those requirements.
+- Subagent output is a work product, not evidence by itself.
+
+Subagents may:
+
+- inspect,
+- compare,
+- summarize,
+- challenge,
+- identify gaps,
+- propose next actions,
+- propose tests,
+- propose audit notes,
+- report uncertainty.
+
+Subagents may not:
+
+- create unsupported facts,
+- invent sources,
+- invent citekeys,
+- invent page numbers,
+- invent quotations,
+- invent studies,
+- invent bibliographic metadata,
+- treat their own output as evidence,
+- bypass required checks,
+- silently resolve conflicts,
+- authorize edits forbidden by the host project,
+- weaken uncertainty or evidence status.
+
+## Authorization and boundaries
+
+The user has standing authorization for bounded delegation when the internal decision is `parallel-subagents`, but only inside active user and repository approval rules. Do not ask for separate authorization before spawning bounded subagents unless host rules, user instructions, safety policy, privacy rules, vendor rules, or the action itself require approval.
+
+Clear boundaries are required first: role, mode, scope, expected output, and no recursive fan-out. Ask the user only when boundaries cannot be defined, the user opted out, or the action itself needs approval such as destructive or externally visible work.
+
+## Quiet first decision
+
+Decide internally whether the task fits exactly one of:
 
 1. `single-thread`
    - The task is small, direct, low-uncertainty, or one-file/one-command obvious.
@@ -48,9 +93,11 @@ Before substantive work, classify the task as exactly one of:
 - The repo state is dirty and isolation is unclear.
 - You cannot define bounded jobs with clear outputs.
 
-## Output before work
+## User-facing output
 
-Always start non-trivial work with:
+Do not ask the user whether orchestration is preferable. Decide internally.
+
+Do not print a standard orchestration banner for simple/default work. For complex work, mention orchestration only when it materially changes the approach. If a user-facing note is useful, keep it brief:
 
 ```text
 Orchestration: single-thread | sequential-plan | parallel-subagents
@@ -82,7 +129,7 @@ Use this order when the decision is `parallel-subagents`:
 5. Continue local work only on non-overlapping context while agents run.
 6. Wait for all agents that affect the next decision.
 7. Synthesize agreed facts, conflicts, files, risks, and tests before any edits.
-8. Ask before code changes unless the user clearly requested implementation.
+8. Ask before code changes only if implementation was not clearly requested, boundaries are unclear, or the action is destructive or externally visible.
 
 ### Spawn Template
 
@@ -172,6 +219,9 @@ Then implement the smallest safe plan.
 
 ## Hard rules
 
+- Existing orchestration, routing, bootstrap, skill-selection, and agent-management frameworks take priority.
+- Use this skill as a complement or fallback, not a competing workflow.
+- Prefer `single-thread` or `sequential-plan` unless bounded independent tracks clearly add value.
 - Prefer read-only subagents before edit-capable subagents.
 - Keep each subagent bounded and independently useful.
 - Give each subagent a clear return format.
@@ -179,7 +229,7 @@ Then implement the smallest safe plan.
 - Wait for all subagents before final synthesis.
 - Do not silently merge conflicting findings.
 - Do not make code changes until the orchestration decision is complete.
-- Ask before code changes unless the user clearly requested implementation.
+- Ask before code changes only if implementation was not clearly requested, boundaries are unclear, or the action is destructive or externally visible.
 - When subagents are not worth it, say so briefly and continue single-threaded.
 
 ## Synthesis format after subagents

@@ -2,11 +2,13 @@
 """
 UserPromptSubmit hook for Codex.
 
-Superpowers-like behavior:
-- Every submitted prompt is classified before the model starts work.
+Quiet compatibility behavior:
+- Every submitted prompt is classified before output is chosen.
+- Simple/default prompts stay silent.
 - The hook does not spawn subagents by itself.
-- It injects developer-context guidance so Codex either stays single-threaded,
-  does a brief orchestration check, or uses the subagent-orchestrator skill.
+- For complex prompts, it injects a quiet hint that complements existing
+  orchestration, routing, bootstrap, skill-selection, and agent-management
+  frameworks instead of competing with them.
 
 Codex hook docs: UserPromptSubmit receives JSON on stdin with a `prompt` field and
 can return JSON with hookSpecificOutput.additionalContext.
@@ -110,6 +112,18 @@ SIMPLE_SIGNALS = (
     SignalSet("direct ask", 1, (r"^\s*(give me|write|draft|compose)\b",)),
 )
 
+QUIET_COMPATIBILITY_RULES = """
+Compatibility rules:
+- Respect all active user and repository instructions. This orchestration gate only affects execution shape; it does not override source-of-truth, citation, manuscript, safety, privacy, vendor, approval, or testing rules.
+- Do not ask the user whether orchestration is preferable; decide internally.
+- The user has standing authorization for bounded delegation when the internal decision is parallel-subagents, but only inside active user and repository approval rules; do not ask for separate authorization before bounded delegation unless those rules or the action itself require approval.
+- Do not override any existing orchestration, routing, bootstrap, skill-selection, or agent-management framework.
+- Use subagent-orchestrator only as a complement or fallback.
+- Prefer single-thread or sequential-plan unless bounded independent parallel tracks clearly add value.
+- Require clear boundaries before spawning: role, mode, scope, expected output, and no recursive fan-out.
+- Do not print a standard orchestration gate banner; mention orchestration only when it materially changes the work.
+""".strip()
+
 
 def classify(prompt: str) -> tuple[str, str]:
     text = prompt.strip()
@@ -156,7 +170,7 @@ def classify(prompt: str) -> tuple[str, str]:
     return ("single-thread-default", "No strong parallelization signals detected.")
 
 
-def build_context(decision: str, reason: str) -> str:
+def build_context(decision: str, reason: str) -> str | None:
     if decision == "orchestration-opt-out":
         return f"""
 Subagent orchestration gate result: skip.
@@ -173,38 +187,33 @@ Treat this as a bounded subagent task. Do not spawn further subagents unless the
 
     if decision == "use-subagent-orchestrator":
         return f"""
-Subagent orchestration gate triggered before work.
+Subagent orchestration gate quiet hint.
 Preliminary classification: use-subagent-orchestrator.
 Reason: {reason}
 
-Use or load the `subagent-orchestrator` skill if available. If skill activation is unavailable, follow this inline gate:
+{QUIET_COMPATIBILITY_RULES}
+
+If no higher-priority framework already covers this decision, the `subagent-orchestrator` skill may be used as a fallback. If skill activation is unavailable, follow this inline gate internally:
 - classify the task as single-thread, sequential-plan, or parallel-subagents;
 - spawn subagents only when the work decomposes cleanly into bounded independent tasks;
 - prefer read-only mapper/reviewer/tester/docs agents before edit-capable agents;
 - avoid recursive fan-out;
 - wait for all agents;
 - synthesize agreed facts, conflicts, files, risks, and tests before acting.
-If parallelism is not actually useful after inspection, say so briefly and proceed single-threaded.
+If parallelism is not actually useful after inspection, proceed single-threaded or with a sequential plan.
 """.strip()
 
     if decision == "orchestration-check":
         return f"""
-Subagent orchestration gate result: check.
+Subagent orchestration gate quiet hint: check.
 Preliminary reason: {reason}
-Before substantive work, briefly classify the task as single-thread, sequential-plan, or parallel-subagents. Use subagents only if the task decomposes cleanly and coordination overhead is worth it.
+
+{QUIET_COMPATIBILITY_RULES}
+
+Evaluate internally whether the task is single-thread, sequential-plan, or parallel-subagents. Use subagents only if the task decomposes cleanly and coordination overhead is worth it.
 """.strip()
 
-    if decision == "single-thread-likely":
-        return f"""
-Subagent orchestration gate result: single-thread likely.
-Reason: {reason}
-Do not spawn subagents unless hidden complexity appears after initial inspection.
-""".strip()
-
-    return """
-Subagent orchestration gate result: single-thread default.
-Default to single-thread execution unless hidden complexity appears. For non-trivial work, briefly evaluate whether single-thread, sequential-plan, or parallel-subagents is safest.
-""".strip()
+    return None
 
 
 def main() -> int:
@@ -217,12 +226,12 @@ def main() -> int:
     prompt = str(payload.get("prompt", ""))
     decision, reason = classify(prompt)
     additional_context = build_context(decision, reason)
+    hook_output = {"hookEventName": "UserPromptSubmit"}
+    if additional_context:
+        hook_output["additionalContext"] = additional_context
 
     print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": additional_context,
-        }
+        "hookSpecificOutput": hook_output
     }))
     return 0
 
