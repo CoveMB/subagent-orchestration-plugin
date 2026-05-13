@@ -67,6 +67,7 @@ The desired result is one of:
 - `parallel-subagents`
 
 Only spawn subagents when the evaluation shows real value.
+When the evaluation selects `parallel-subagents`, actual spawning is required: call `spawn_agent` or the available subagent-spawning tool after defining bounded roles. Do not stop at a plan, recommendation, or statement that subagents would be useful. If no subagent-spawning tool is available, or a higher-priority instruction blocks spawning, state that blocker and proceed with the closest sequential fallback.
 
 ## If `check`
 

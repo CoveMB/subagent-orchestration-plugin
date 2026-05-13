@@ -118,12 +118,14 @@ Subagents:
 
 Then spawn the agents, wait for all results, and synthesize before acting.
 
+Actual spawning is part of the contract. When the execution shape is `parallel-subagents`, call `spawn_agent` or the available subagent-spawning tool in the same turn after defining bounded roles. Do not stop at a plan, recommendation, or statement that subagents would be useful. If no subagent-spawning tool is available, or a higher-priority instruction blocks spawning, state that blocker and proceed with the closest sequential fallback.
+
 ## Execution Runbook
 
 Use this order when the decision is `parallel-subagents`:
 
 1. State the orchestration decision, reason, plan, and bounded subagents.
-2. Spawn the smallest useful set of read-only agents first.
+2. Call `spawn_agent` or the available subagent-spawning tool for the smallest useful set of read-only agents first.
 3. Give each agent one self-contained task, explicit mode, expected output, and no permission to fan out.
 4. Keep implementation agents for later unless the user already requested code changes and write scopes are disjoint.
 5. Continue local work only on non-overlapping context while agents run.
@@ -225,6 +227,7 @@ Then implement the smallest safe plan.
 - Prefer read-only subagents before edit-capable subagents.
 - Keep each subagent bounded and independently useful.
 - Give each subagent a clear return format.
+- If the decision is `parallel-subagents`, do not stop at a plan; spawn immediately or state the concrete blocker.
 - Do not recursively spawn subagents unless the user explicitly asks.
 - Wait for all subagents before final synthesis.
 - Do not silently merge conflicting findings.

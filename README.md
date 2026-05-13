@@ -37,6 +37,8 @@ For Codex, the quiet behavior comes from three layers together:
 2. **Orchestration skill**: `subagent-orchestrator` chooses `single-thread`, `sequential-plan`, or `parallel-subagents`.
 3. **UserPromptSubmit hook**: always reports a result and reason through valid `additionalContext`; simple/default prompts include only that metadata, while complex prompts also receive quiet compatibility guidance.
 
+The hook does not spawn agents by itself. It injects the execution contract. After the orchestration skill selects `parallel-subagents`, the assistant must call `spawn_agent` or the available subagent-spawning tool in that same turn after defining bounded roles. It should only fall back to sequential work when no spawning tool is available or higher-priority rules block spawning.
+
 A plugin can package the skills. The installer supports user/global skill installation and project-scoped activation, but activation is always explicit.
 
 ## Boundary model

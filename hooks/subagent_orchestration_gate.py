@@ -240,6 +240,8 @@ Guidance: Use `subagent-orchestrator` as a fallback only when no higher-priority
 Inline execution gate
 - Classify the task as single-thread, sequential-plan, or parallel-subagents.
 - Spawn subagents only when the work decomposes cleanly into bounded independent tasks.
+- When the execution shape is parallel-subagents, call spawn_agent or the available subagent-spawning tool after defining bounded roles; do not stop at a plan or recommendation.
+- If no subagent-spawning tool is available, or higher-priority instructions block spawning, state that blocker and proceed with the closest sequential fallback.
 - Prefer read-only mapper/reviewer/tester/docs agents before edit-capable agents.
 - Avoid recursive fan-out.
 - Wait for all agents.

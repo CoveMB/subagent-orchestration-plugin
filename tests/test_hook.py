@@ -860,6 +860,24 @@ def test_skills_treat_bounded_delegation_as_authorized() -> None:
     assert "ask before code changes only if" in orchestrator_text
 
 
+def test_parallel_subagent_decision_requires_actual_spawn_attempt() -> None:
+    required_terms = [
+        "spawn_agent",
+        "available subagent-spawning tool",
+        "do not stop at a plan",
+    ]
+    for path in [ORCHESTRATOR_SKILL, USING_ORCHESTRATOR_SKILL]:
+        text = path.read_text(encoding="utf-8").lower()
+        for term in required_terms:
+            assert term in text, (path, term)
+
+    context = run("Debug a flaky multi-file auth regression and propose tests.")
+    assert context is not None
+    context_text = context.lower()
+    for term in required_terms:
+        assert term in context_text, term
+
+
 def test_skills_define_host_project_boundary() -> None:
     for path in [ORCHESTRATOR_SKILL, USING_ORCHESTRATOR_SKILL]:
         text = path.read_text(encoding="utf-8").lower()
