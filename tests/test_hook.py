@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,9 +17,10 @@ UNINSTALLER = ROOT / "scripts" / "uninstall_user.py"
 ORCHESTRATOR_SKILL = ROOT / "plugin" / "subagent-orchestrator" / "skills" / "subagent-orchestrator" / "SKILL.md"
 USING_ORCHESTRATOR_SKILL = ROOT / "plugin" / "subagent-orchestrator" / "skills" / "using-subagent-orchestrator" / "SKILL.md"
 BOUNDARY_SENTENCE = (
-    "Respect all active user and repository instructions. This orchestration gate only affects execution shape; "
-    "it does not override source-of-truth, citation, manuscript, safety, privacy, vendor, approval, or testing rules."
+    "This orchestration gate only affects execution shape; it does not override repository source-of-truth, "
+    "citation, manuscript, safety, privacy, vendor, approval, or testing rules."
 )
+USER_PROMPT_SUBMIT_OUTPUT_KEYS = {"hookEventName", "additionalContext"}
 
 
 def run_payload(prompt: str) -> dict[str, object]:
@@ -32,22 +34,51 @@ def run_payload(prompt: str) -> dict[str, object]:
     return json.loads(proc.stdout)
 
 
-def run(prompt: str) -> str | None:
+def hook_specific_output(prompt: str) -> dict[str, object]:
     data = run_payload(prompt)
     hook_output = data.get("hookSpecificOutput", {})
     assert isinstance(hook_output, dict), data
+    return hook_output
+
+
+def run(prompt: str) -> str | None:
+    hook_output = hook_specific_output(prompt)
     return hook_output.get("additionalContext")
 
 
-def run_installer(arguments: list[str], home: Path, app_home: Path) -> subprocess.CompletedProcess[str]:
-    return run_user_script(INSTALLER, arguments, home, app_home)
+def assert_context_reports_result_and_reason(prompt: str, expected_result: str) -> str:
+    context = run(prompt)
+    assert context is not None, prompt
+    assert f"Subagent orchestration gate result: {expected_result}." in context, (prompt, context)
+    assert "\nReason: " in context, (prompt, context)
+    return context
 
 
-def run_uninstaller(arguments: list[str], home: Path, app_home: Path) -> subprocess.CompletedProcess[str]:
-    return run_user_script(UNINSTALLER, arguments, home, app_home)
+def run_installer(
+    arguments: list[str],
+    home: Path,
+    app_home: Path,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return run_user_script(INSTALLER, arguments, home, app_home, cwd)
 
 
-def run_user_script(script: Path, arguments: list[str], home: Path, app_home: Path) -> subprocess.CompletedProcess[str]:
+def run_uninstaller(
+    arguments: list[str],
+    home: Path,
+    app_home: Path,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return run_user_script(UNINSTALLER, arguments, home, app_home, cwd)
+
+
+def run_user_script(
+    script: Path,
+    arguments: list[str],
+    home: Path,
+    app_home: Path,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["CODEX_HOME"] = str(app_home)
@@ -56,6 +87,7 @@ def run_user_script(script: Path, arguments: list[str], home: Path, app_home: Pa
         text=True,
         capture_output=True,
         env=env,
+        cwd=cwd,
         check=False,
     )
 
@@ -92,12 +124,39 @@ def custom_agent_paths(app_home: Path) -> list[Path]:
     return sorted((app_home / "agents").glob("so_*.toml"))
 
 
+def project_config_path(repo: Path) -> Path:
+    return repo / ".codex" / "config.toml"
+
+
+def project_hook_path(repo: Path) -> Path:
+    return repo / ".codex" / "hooks" / "subagent_orchestration_gate.py"
+
+
+def project_skill_path(repo: Path, name: str) -> Path:
+    return repo / ".agents" / "skills" / name
+
+
+def project_marketplace_path(repo: Path) -> Path:
+    return repo / ".agents" / "plugins" / "marketplace.json"
+
+
+def project_manifest_path(repo: Path) -> Path:
+    return repo / ".codex" / "subagent-orchestrator-install.json"
+
+
+def prepare_vendored_plugin(repo: Path) -> Path:
+    vendor_root = repo / "vendor" / "subagent-orchestration-plugin"
+    shutil.copytree(ROOT / "plugin", vendor_root / "plugin")
+    shutil.copytree(ROOT / "hooks", vendor_root / "hooks")
+    return vendor_root
+
+
 def assert_skills_installed(home: Path) -> None:
     assert (skill_path(home, "subagent-orchestrator") / "SKILL.md").exists()
     assert (skill_path(home, "using-subagent-orchestrator") / "SKILL.md").exists()
 
 
-def test_default_install_stages_skills_and_hook_without_activation() -> None:
+def test_default_install_stages_skills_without_hook_or_activation() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
         home = root / "home"
@@ -105,12 +164,14 @@ def test_default_install_stages_skills_and_hook_without_activation() -> None:
         proc = run_installer([], home, app_home)
         assert_installer_ok(proc)
         assert_skills_installed(home)
-        assert hook_path(app_home).exists()
+        assert not hook_path(app_home).exists()
         assert not config_path(app_home).exists()
         assert not global_agents_path(app_home).exists()
         assert not custom_agent_paths(app_home)
         assert not plugin_path(app_home).exists()
         assert not marketplace_path(home).exists()
+        assert "Hook not staged" in proc.stdout
+        assert "config.toml was not modified" in proc.stdout
 
 
 def test_skills_only_skips_hook_and_activation_files() -> None:
@@ -140,7 +201,7 @@ def test_config_patch_flags_are_rejected_without_touching_config() -> None:
         for flag in ["--patch-config", "--activate-gate"]:
             proc = run_installer([flag], home, app_home)
             assert proc.returncode != 0, proc.stdout
-            assert "unrecognized arguments" in proc.stderr
+            assert "unrecognized arguments" in proc.stderr or "requires --scope project" in proc.stderr
             assert config.read_text(encoding="utf-8") == "[features]\nexisting = true\n"
             assert not hook_path(app_home).exists()
 
@@ -204,6 +265,320 @@ def test_dry_run_changes_nothing() -> None:
         assert not app_home.exists()
 
 
+def test_project_scope_never_writes_home_paths() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+
+        proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(repo),
+                "--activate-gate",
+                "--copy-skills",
+                "--with-project-agents",
+                "--with-repo-marketplace",
+                "--append-project-agents-md",
+            ],
+            home,
+            app_home,
+        )
+
+        assert_installer_ok(proc)
+        assert project_config_path(repo).exists()
+        assert project_hook_path(repo).exists()
+        assert project_skill_path(repo, "subagent-orchestrator").exists()
+        assert project_skill_path(repo, "using-subagent-orchestrator").exists()
+        assert (repo / ".codex" / "agents" / "so_mapper.toml").exists()
+        assert project_marketplace_path(repo).exists()
+        assert (repo / "AGENTS.md").exists()
+        agents_text = (repo / "AGENTS.md").read_text(encoding="utf-8")
+        assert "execution-shape helper only" in agents_text
+        assert "Host project rules win" in agents_text
+        assert "Subagent output is not evidence" in agents_text
+        assert "Keep subagents read-only by default" in agents_text
+        assert "Do not invent sources, citekeys, page numbers, quotations, studies, or metadata" in agents_text
+        assert "Do not install global hooks/config by default" in agents_text
+        assert not home.exists()
+        assert not app_home.exists()
+
+
+def test_project_scope_dry_run_writes_nothing() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+
+        proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(repo),
+                "--activate-gate",
+                "--with-project-agents",
+                "--with-repo-marketplace",
+                "--append-project-agents-md",
+                "--dry-run",
+            ],
+            home,
+            app_home,
+        )
+
+        assert_installer_ok(proc)
+        assert "would patch project config" in proc.stdout
+        assert "would install project hook" in proc.stdout
+        assert not list(repo.iterdir())
+        assert not home.exists()
+        assert not app_home.exists()
+
+
+def test_project_config_patch_is_idempotent_and_uses_git_root_command() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+        config = project_config_path(repo)
+        config.parent.mkdir(parents=True)
+        config.write_text("[features]\nexisting = true\n\n[agents]\nmax_threads_backup = 99\n", encoding="utf-8")
+
+        args = ["--scope", "project", "--repo-root", str(repo), "--activate-gate", "--copy-skills"]
+        first_proc = run_installer(args, home, app_home)
+        assert_installer_ok(first_proc)
+        first_config = config.read_text(encoding="utf-8")
+        second_proc = run_installer(args, home, app_home)
+        assert_installer_ok(second_proc)
+        second_config = config.read_text(encoding="utf-8")
+
+        assert first_config == second_config
+        assert "existing = true" in second_config
+        assert "max_threads_backup = 99" in second_config
+        assert "codex_hooks = true" in second_config
+        assert "max_threads = 4" in second_config
+        assert "max_depth = 1" in second_config
+        assert "statusMessage = \"Evaluating subagent orchestration\"" in second_config
+        assert "command = 'python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/subagent_orchestration_gate.py\"'" in second_config
+        assert second_config.count("subagent_orchestration_gate.py") == 1
+        assert tomllib.loads(second_config)["features"]["codex_hooks"] is True
+        assert config.with_suffix(".toml.bak").exists()
+
+
+def test_project_skills_are_symlinked_or_copied_correctly() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        symlink_repo = root / "symlink-repo"
+        symlink_repo.mkdir()
+        vendor_root = prepare_vendored_plugin(symlink_repo)
+
+        symlink_proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(symlink_repo),
+                "--from-vendor",
+                str(vendor_root),
+                "--available-only",
+                "--link-skills",
+            ],
+            home,
+            app_home,
+        )
+
+        assert_installer_ok(symlink_proc)
+        linked_skill = project_skill_path(symlink_repo, "subagent-orchestrator")
+        assert linked_skill.is_symlink()
+        assert linked_skill.resolve() == (vendor_root / "plugin" / "subagent-orchestrator" / "skills" / "subagent-orchestrator").resolve()
+
+        copy_repo = root / "copy-repo"
+        copy_repo.mkdir()
+        copy_proc = run_installer(
+            ["--scope", "project", "--repo-root", str(copy_repo), "--available-only", "--copy-skills"],
+            home,
+            app_home,
+        )
+
+        assert_installer_ok(copy_proc)
+        copied_skill = project_skill_path(copy_repo, "subagent-orchestrator")
+        assert copied_skill.exists()
+        assert not copied_skill.is_symlink()
+        assert (copied_skill / "SKILL.md").exists()
+
+
+def test_project_agents_are_opt_in() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+
+        default_proc = run_installer(
+            ["--scope", "project", "--repo-root", str(repo), "--activate-gate", "--copy-skills"],
+            home,
+            app_home,
+        )
+        assert_installer_ok(default_proc)
+        assert not (repo / ".codex" / "agents").exists()
+
+        opt_in_proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(repo),
+                "--activate-gate",
+                "--copy-skills",
+                "--with-project-agents",
+            ],
+            home,
+            app_home,
+        )
+        assert_installer_ok(opt_in_proc)
+        assert (repo / ".codex" / "agents" / "so_mapper.toml").exists()
+
+
+def test_project_repo_marketplace_writes_vendored_plugin_path() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+        vendor_root = prepare_vendored_plugin(repo)
+
+        proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(repo),
+                "--from-vendor",
+                str(vendor_root),
+                "--available-only",
+                "--copy-skills",
+                "--with-repo-marketplace",
+            ],
+            home,
+            app_home,
+        )
+
+        assert_installer_ok(proc)
+        marketplace = json.loads(project_marketplace_path(repo).read_text(encoding="utf-8"))
+        plugin = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "subagent-orchestrator")
+        assert plugin == {
+            "name": "subagent-orchestrator",
+            "source": {
+                "source": "local",
+                "path": "./vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator",
+            },
+            "policy": {
+                "installation": "AVAILABLE",
+                "authentication": "ON_INSTALL",
+            },
+            "category": "Productivity",
+        }
+
+
+def test_project_vendored_hook_wrapper_fails_open_when_vendor_hook_is_missing() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+        vendor_root = prepare_vendored_plugin(repo)
+
+        proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(repo),
+                "--from-vendor",
+                str(vendor_root),
+                "--activate-gate",
+                "--link-skills",
+            ],
+            home,
+            app_home,
+        )
+        assert_installer_ok(proc)
+        (vendor_root / "hooks" / "subagent_orchestration_gate.py").unlink()
+
+        hook_proc = subprocess.run(
+            [sys.executable, str(project_hook_path(repo))],
+            input=json.dumps({"prompt": "Debug a flaky auth regression."}),
+            text=True,
+            capture_output=True,
+            cwd=repo,
+            check=True,
+        )
+        hook_output = json.loads(hook_proc.stdout)["hookSpecificOutput"]
+        assert hook_output["result"] == "skip"
+        assert "missing" in hook_output["reason"]
+        assert "additionalContext" not in hook_output
+
+
+def test_project_uninstall_removes_manifest_owned_files_only() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+
+        install_proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(repo),
+                "--activate-gate",
+                "--copy-skills",
+                "--with-project-agents",
+                "--with-repo-marketplace",
+                "--append-project-agents-md",
+            ],
+            home,
+            app_home,
+        )
+        assert_installer_ok(install_proc)
+        unrelated_file = repo / ".codex" / "hooks" / "keep.py"
+        unrelated_file.write_text("keep = True\n", encoding="utf-8")
+
+        uninstall_proc = run_installer(
+            ["--scope", "project", "--repo-root", str(repo), "--uninstall"],
+            home,
+            app_home,
+        )
+
+        assert_installer_ok(uninstall_proc)
+        assert not project_manifest_path(repo).exists()
+        assert not project_hook_path(repo).exists()
+        assert not project_skill_path(repo, "subagent-orchestrator").exists()
+        assert not project_skill_path(repo, "using-subagent-orchestrator").exists()
+        assert not (repo / ".codex" / "agents" / "so_mapper.toml").exists()
+        if project_config_path(repo).exists():
+            assert "subagent_orchestration_gate.py" not in project_config_path(repo).read_text(encoding="utf-8")
+        if project_marketplace_path(repo).exists():
+            assert "subagent-orchestrator" not in project_marketplace_path(repo).read_text(encoding="utf-8")
+        if (repo / "AGENTS.md").exists():
+            assert "Optional subagent orchestration" not in (repo / "AGENTS.md").read_text(encoding="utf-8")
+        assert unrelated_file.exists()
+
+
 def test_default_install_preserves_existing_config() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
@@ -223,10 +598,11 @@ def test_uninstall_removes_owned_config_guidance_and_marketplace() -> None:
         root = Path(temp_dir)
         home = root / "home"
         app_home = root / "app"
-        install_proc = run_installer([], home, app_home)
+        install_proc = run_installer(["--with-hook"], home, app_home)
         assert_installer_ok(install_proc)
 
         config = app_home / "config.toml"
+        config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(
             "[[hooks.UserPromptSubmit]]\n"
             "[[hooks.UserPromptSubmit.hooks]]\n"
@@ -338,17 +714,40 @@ def test_classifier_detects_broad_investigations() -> None:
         assert "standing authorization" in context.lower(), context
 
 
-def test_classifier_stays_silent_for_default_and_simple_prompts() -> None:
+def test_classifier_returns_only_result_for_default_and_simple_prompts() -> None:
+    cases = [
+        ("What does this repository do?", "single-thread-likely"),
+        ("Rename this variable in one file.", "single-thread-likely"),
+        ("Draft a short note for the changelog.", "single-thread-default"),
+    ]
+    for prompt, expected_result in cases:
+        context = assert_context_reports_result_and_reason(prompt, expected_result)
+        assert BOUNDARY_SENTENCE in context, (prompt, context)
+        assert "Compatibility rules:" not in context, (prompt, context)
+        assert "Subagent orchestration gate quiet hint" not in context, (prompt, context)
+
+
+def test_classifier_always_reports_result_and_reason() -> None:
+    cases = [
+        ("What does this repository do?", "single-thread-likely"),
+        ("Rename this variable in one file.", "single-thread-likely"),
+        ("Debug a flaky multi-file auth regression and propose tests.", "use-subagent-orchestrator"),
+        ("Do not use subagents. Debug the flaky auth regression linearly.", "orchestration-opt-out"),
+        ("You are a subagent. Review src/auth.ts and return findings.", "recursion-guard"),
+    ]
+    for prompt, expected_result in cases:
+        assert_context_reports_result_and_reason(prompt, expected_result)
+
+
+def test_hook_specific_output_uses_only_codex_schema_keys() -> None:
     cases = [
         "What does this repository do?",
-        "Rename this variable in one file.",
-        "Draft a short note for the changelog.",
+        "Debug a flaky multi-file auth regression and propose tests.",
+        "Do not use subagents. Debug the flaky auth regression linearly.",
     ]
     for prompt in cases:
-        data = run_payload(prompt)
-        hook_output = data.get("hookSpecificOutput", {})
-        assert isinstance(hook_output, dict), data
-        assert "additionalContext" not in hook_output, (prompt, data)
+        hook_output = hook_specific_output(prompt)
+        assert set(hook_output) <= USER_PROMPT_SUBMIT_OUTPUT_KEYS, (prompt, hook_output)
 
 
 def test_classifier_guards_custom_agent_prompts() -> None:
@@ -416,7 +815,7 @@ def test_gitignore_excludes_generated_files() -> None:
 
 
 def main() -> int:
-    test_default_install_stages_skills_and_hook_without_activation()
+    test_default_install_stages_skills_without_hook_or_activation()
     test_skills_only_skips_hook_and_activation_files()
     test_config_patch_flags_are_rejected_without_touching_config()
     test_with_hook_installs_hook_without_config_patch()
@@ -424,6 +823,14 @@ def main() -> int:
     test_global_agents_flag_is_not_part_of_user_installer()
     test_plugin_flag_is_not_part_of_user_installer()
     test_dry_run_changes_nothing()
+    test_project_scope_never_writes_home_paths()
+    test_project_scope_dry_run_writes_nothing()
+    test_project_config_patch_is_idempotent_and_uses_git_root_command()
+    test_project_skills_are_symlinked_or_copied_correctly()
+    test_project_agents_are_opt_in()
+    test_project_repo_marketplace_writes_vendored_plugin_path()
+    test_project_vendored_hook_wrapper_fails_open_when_vendor_hook_is_missing()
+    test_project_uninstall_removes_manifest_owned_files_only()
     test_default_install_preserves_existing_config()
     test_uninstall_removes_owned_config_guidance_and_marketplace()
     test_orchestrator_skill_has_execution_runbook()
@@ -432,7 +839,9 @@ def main() -> int:
     test_classifier_respects_opt_out_variants()
     test_classifier_preserves_conditional_orchestration()
     test_classifier_detects_broad_investigations()
-    test_classifier_stays_silent_for_default_and_simple_prompts()
+    test_classifier_returns_only_result_for_default_and_simple_prompts()
+    test_classifier_always_reports_result_and_reason()
+    test_hook_specific_output_uses_only_codex_schema_keys()
     test_classifier_guards_custom_agent_prompts()
     test_toml_snippets_parse()
     test_hook_config_snippets_stay_quiet()
@@ -445,7 +854,7 @@ def main() -> int:
 
     cases = [
         ("Debug a flaky multi-file auth regression and propose tests.", "use-subagent-orchestrator"),
-        ("Rename this variable in one file.", ""),
+        ("Rename this variable in one file.", "single-thread-likely"),
         ("Do not use subagents. Debug the flaky auth regression linearly.", "skip"),
         ("You are a subagent. Review src/auth.ts and return findings.", "skip recursive"),
     ]

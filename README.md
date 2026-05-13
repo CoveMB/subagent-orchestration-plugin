@@ -2,9 +2,9 @@
 
 This starter kit gives Codex a quiet, compatibility-oriented orchestration gate:
 
-- every prompt is classified internally, while simple/default prompts stay completely silent,
+- every prompt is classified internally and receives compact result/reason metadata,
 - existing orchestration, routing, bootstrap, skill-selection, and agent-management frameworks take priority,
-- simple prompts stay single-threaded,
+- simple prompts stay single-threaded unless the user asks otherwise,
 - complex prompts can receive a quiet hint to use `subagent-orchestrator` only as a complement or fallback,
 - bounded delegation has standing authorization when the internal decision is `parallel-subagents`,
 - parallel subagents are used only when they add real value.
@@ -35,18 +35,20 @@ For Codex, the quiet behavior comes from three layers together:
 
 1. **Compatibility skill**: `using-subagent-orchestrator` exists for explicit or legacy checks.
 2. **Orchestration skill**: `subagent-orchestrator` chooses `single-thread`, `sequential-plan`, or `parallel-subagents`.
-3. **UserPromptSubmit hook**: stays silent for simple/default prompts and injects only a quiet compatibility hint for complex prompts.
+3. **UserPromptSubmit hook**: always reports a result and reason through valid `additionalContext`; simple/default prompts include only that metadata, while complex prompts also receive quiet compatibility guidance.
 
-A plugin can package the skills. The user installer copies only the direct skill folders and a dormant hook file; hook registration remains a manual config step.
+A plugin can package the skills. The installer supports user/global skill installation and project-scoped activation, but activation is always explicit.
 
 ## Boundary model
 
 - **Plugin-level boundary**: this plugin is an execution-shape helper only. It can help choose `single-thread`, `sequential-plan`, or `parallel-subagents`; it does not decide truth, evidence, citations, approvals, vendor trust, or test sufficiency.
 - **Host-repo boundary**: domain-specific user instructions, repository `AGENTS.md`, local scripts, audit requirements, and source-of-truth rules win over plugin guidance. When host repository rules are stricter, host repository rules win.
 - **Hook boundary**: the hook only injects guidance. It does not enforce truth, validate sources, authorize edits, satisfy citations, replace tests, or bypass safety/privacy/vendor/approval rules.
-- **Installer boundary**: the user installer never writes `CODEX_HOME/config.toml` or `CODEX_HOME/AGENTS.md`. It stages skills and a dormant hook only.
+- **Installer boundary**: user scope never writes `CODEX_HOME/config.toml` or `CODEX_HOME/AGENTS.md`. Project scope writes only under the selected repository root and never patches `~/.codex` or `~/.agents`.
 
-## Default install: skills plus dormant hook
+## Four install modes
+
+### 1. Manual skill-only use
 
 macOS/Linux:
 
@@ -60,61 +62,9 @@ Windows PowerShell:
 ./install.ps1
 ```
 
-This installs:
+The default user-scope install copies only direct skills to `~/.agents/skills/`. It does not stage a hook, patch config, append guidance, install custom agents, or register plugin packaging.
 
-- direct skills to `~/.agents/skills/`,
-- hook script to `CODEX_HOME/hooks` (`~/.codex/hooks` by default).
-
-The default install does **not** activate the always-on prompt gate. It does not patch `CODEX_HOME/config.toml`, does not append `CODEX_HOME/AGENTS.md`, does not copy custom agents, and does not register plugin packaging. The staged hook file is dormant unless config explicitly points at it.
-
-`--with-hook` (`-WithHook` in PowerShell) is accepted as an explicit spelling of the default hook staging behavior.
-
-Preview the install without writing files:
-
-```bash
-./install.sh --dry-run
-```
-
-PowerShell:
-
-```powershell
-./install.ps1 -DryRun
-```
-
-## Strict skill-only install
-
-Use this when you do not want even a dormant hook file copied:
-
-```bash
-./install.sh --skills-only
-```
-
-PowerShell:
-
-```powershell
-./install.ps1 -SkillsOnly
-```
-
-## Manual hook activation
-
-The `UserPromptSubmit` hook is broad behavior: once registered, it runs for every prompt using that `CODEX_HOME`. Enable it deliberately by manually merging one of `snippets/config.hooks.*.toml` into your config.
-
-The installer will not write this block for you:
-
-```toml
-[features]
-codex_hooks = true
-
-[[hooks.UserPromptSubmit]]
-[[hooks.UserPromptSubmit.hooks]]
-type = "command"
-command = "<your-python> <your-home>/.codex/hooks/subagent_orchestration_gate.py"
-timeout = 5
-```
-
-Manual activation only; the install script does not patch config.
-
-## Manual invocation
+Manual copy is also supported:
 
 ```bash
 mkdir -p ~/.agents/skills
@@ -132,6 +82,148 @@ or:
 ```text
 $subagent-orchestrator choose single-thread, sequential-plan, or parallel-subagents before work.
 ```
+
+### 2. User/global activation
+
+Stage the hook in `CODEX_HOME/hooks` only when you want to manually activate it for that user profile:
+
+```bash
+./install.sh --with-hook
+```
+
+PowerShell:
+
+```powershell
+./install.ps1 -WithHook
+```
+
+The installer still does **not** patch `CODEX_HOME/config.toml`; merge one of `snippets/config.hooks.*.toml` manually when you want the hook active for that global Codex home.
+
+The installer prints an activation reminder at the end:
+
+```text
+config.toml was not modified.
+Hook staged but not active.
+Activation required: manually merge snippets/config.hooks.posix.toml into CODEX_HOME/config.toml.
+```
+
+Preview the install without writing files:
+
+```bash
+./install.sh --dry-run
+```
+
+PowerShell:
+
+```powershell
+./install.ps1 -DryRun
+```
+
+### 3. Project-scoped activation
+
+Project scope writes only inside the repository root. It never writes `~/.codex`, never writes `~/.agents`, never patches `~/.codex/config.toml`, never appends `~/.codex/AGENTS.md`, never installs hooks globally, and never enables plugin state globally.
+
+Activate the gate for Codex sessions opened from a trusted project:
+
+```bash
+./install.sh --scope project --activate-gate --copy-skills
+```
+
+PowerShell:
+
+```powershell
+./install.ps1 -Scope project -ActivateGate -CopySkills
+```
+
+This creates or updates repo-local files:
+
+- `.codex/config.toml`
+- `.codex/hooks/subagent_orchestration_gate.py`
+- `.agents/skills/using-subagent-orchestrator`
+- `.agents/skills/subagent-orchestrator`
+- `.codex/subagent-orchestrator-install.json`
+
+Optional project-only additions:
+
+```bash
+./install.sh --scope project --activate-gate --copy-skills --with-project-agents
+./install.sh --scope project --available-only --copy-skills --with-repo-marketplace
+./install.sh --scope project --available-only --copy-skills --append-project-agents-md
+```
+
+Use `--available-only` to install repo-local skills without activating the prompt gate. Use `--dry-run` to print created, patched, copied, symlinked, and backed-up paths without changing files. Use project uninstall to remove manifest-owned activation files:
+
+```bash
+./install.sh --scope project --repo-root /path/to/repo --uninstall
+```
+
+Project-scoped activation affects only Codex sessions opened from that trusted project, because it uses project `.codex/config.toml`, project hooks, and repo-local skills.
+
+### 4. Vendored project activation
+
+If the plugin is vendored into a repository, prefer symlinked skills:
+
+```bash
+./vendor/subagent-orchestration-plugin/install.sh \
+  --scope project \
+  --repo-root "$(git rev-parse --show-toplevel)" \
+  --from-vendor "$(git rev-parse --show-toplevel)/vendor/subagent-orchestration-plugin" \
+  --activate-gate \
+  --link-skills
+```
+
+This links:
+
+```text
+.agents/skills/using-subagent-orchestrator
+  -> vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator/skills/using-subagent-orchestrator
+
+.agents/skills/subagent-orchestrator
+  -> vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator/skills/subagent-orchestrator
+```
+
+If symlinks fail, the installer falls back to copying. Pass `--copy-skills` to force copies.
+
+The repo marketplace option adds or updates `.agents/plugins/marketplace.json` with a local plugin path:
+
+```json
+{
+  "name": "subagent-orchestrator",
+  "source": {
+    "source": "local",
+    "path": "./vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator"
+  },
+  "policy": {
+    "installation": "AVAILABLE",
+    "authentication": "ON_INSTALL"
+  },
+  "category": "Productivity"
+}
+```
+
+Caveat: plugin UI enable/disable state is stored in `~/.codex/config.toml`, so strict project-only behavior should use repo-local skills and hooks rather than relying only on plugin installation.
+
+## Project hook config
+
+Project activation patches `.codex/config.toml` idempotently and preserves unrelated config:
+
+```toml
+[features]
+codex_hooks = true
+
+[agents]
+max_threads = 4
+max_depth = 1
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/subagent_orchestration_gate.py"'
+timeout = 5
+statusMessage = "Evaluating subagent orchestration"
+```
+
+Existing project config is backed up before modification. The project hook fails open if a vendored hook target is missing.
 
 ## Custom agents
 
@@ -156,7 +248,7 @@ python3 tests/test_hook.py
 Expected:
 
 - debugging prompt => `use-subagent-orchestrator`,
-- rename prompt => silent hook output,
+- rename prompt => `single-thread-likely` with only result/reason metadata,
 - user opt-out => `skip`,
 - child-agent prompt => `skip recursive`.
 

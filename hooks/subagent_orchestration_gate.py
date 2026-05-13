@@ -4,7 +4,8 @@ UserPromptSubmit hook for Codex.
 
 Quiet compatibility behavior:
 - Every submitted prompt is classified before output is chosen.
-- Simple/default prompts stay silent.
+- Every successful classification returns a result and reason in additionalContext.
+- Simple/default prompts emit only classification metadata, without orchestration guidance.
 - The hook does not spawn subagents by itself.
 - For complex prompts, it injects a quiet hint that complements existing
   orchestration, routing, bootstrap, skill-selection, and agent-management
@@ -114,7 +115,7 @@ SIMPLE_SIGNALS = (
 
 QUIET_COMPATIBILITY_RULES = """
 Compatibility rules:
-- Respect all active user and repository instructions. This orchestration gate only affects execution shape; it does not override source-of-truth, citation, manuscript, safety, privacy, vendor, approval, or testing rules.
+- Respect all active user and repository instructions.
 - Do not ask the user whether orchestration is preferable; decide internally.
 - The user has standing authorization for bounded delegation when the internal decision is parallel-subagents, but only inside active user and repository approval rules; do not ask for separate authorization before bounded delegation unless those rules or the action itself require approval.
 - Do not override any existing orchestration, routing, bootstrap, skill-selection, or agent-management framework.
@@ -123,6 +124,8 @@ Compatibility rules:
 - Require clear boundaries before spawning: role, mode, scope, expected output, and no recursive fan-out.
 - Do not print a standard orchestration gate banner; mention orchestration only when it materially changes the work.
 """.strip()
+
+HOST_PROJECT_BOUNDARY_SENTENCE = "This orchestration gate only affects execution shape; it does not override repository source-of-truth, citation, manuscript, safety, privacy, vendor, approval, or testing rules."
 
 
 def classify(prompt: str) -> tuple[str, str]:
@@ -170,26 +173,34 @@ def classify(prompt: str) -> tuple[str, str]:
     return ("single-thread-default", "No strong parallelization signals detected.")
 
 
-def build_context(decision: str, reason: str) -> str | None:
+def is_skip_decision(decision: str) -> bool:
+    return decision in {"orchestration-opt-out", "recursion-guard"}
+
+
+def format_result_context(decision: str, reason: str) -> str:
+    lines = [
+        f"\nSubagent orchestration gate result: {decision}.",
+        f"Reason: {reason}",
+    ]
+    if not is_skip_decision(decision):
+        lines.append(HOST_PROJECT_BOUNDARY_SENTENCE)
+    return "\n".join(lines)
+
+
+def build_context(decision: str, reason: str) -> str:
+    result_context = format_result_context(decision, reason)
+
     if decision == "orchestration-opt-out":
-        return f"""
-Subagent orchestration gate result: skip.
-Reason: {reason}
-Respect the user's opt-out. Do not spawn subagents or force orchestration unless the user later reverses this instruction.
-""".strip()
+        return result_context + "\nAction: skip orchestration. Respect the user's opt-out. Do not spawn subagents or force orchestration unless the user later reverses this instruction."
 
     if decision == "recursion-guard":
-        return f"""
-Subagent orchestration gate result: skip recursive orchestration.
-Reason: {reason}
-Treat this as a bounded subagent task. Do not spawn further subagents unless the parent explicitly requested nested delegation.
-""".strip()
+        return result_context + "\nAction: skip recursive orchestration. Treat this as a bounded subagent task. Do not spawn further subagents unless the parent explicitly requested nested delegation."
 
     if decision == "use-subagent-orchestrator":
-        return f"""
+        guidance = f"""
+
 Subagent orchestration gate quiet hint.
 Preliminary classification: use-subagent-orchestrator.
-Reason: {reason}
 
 {QUIET_COMPATIBILITY_RULES}
 
@@ -202,18 +213,20 @@ If no higher-priority framework already covers this decision, the `subagent-orch
 - synthesize agreed facts, conflicts, files, risks, and tests before acting.
 If parallelism is not actually useful after inspection, proceed single-threaded or with a sequential plan.
 """.strip()
+        return result_context + "\n\n" + guidance
 
     if decision == "orchestration-check":
-        return f"""
+        guidance = f"""
+
 Subagent orchestration gate quiet hint: check.
-Preliminary reason: {reason}
 
 {QUIET_COMPATIBILITY_RULES}
 
 Evaluate internally whether the task is single-thread, sequential-plan, or parallel-subagents. Use subagents only if the task decomposes cleanly and coordination overhead is worth it.
 """.strip()
+        return result_context + "\n\n" + guidance
 
-    return None
+    return result_context
 
 
 def main() -> int:
@@ -226,9 +239,10 @@ def main() -> int:
     prompt = str(payload.get("prompt", ""))
     decision, reason = classify(prompt)
     additional_context = build_context(decision, reason)
-    hook_output = {"hookEventName": "UserPromptSubmit"}
-    if additional_context:
-        hook_output["additionalContext"] = additional_context
+    hook_output = {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": additional_context,
+    }
 
     print(json.dumps({
         "hookSpecificOutput": hook_output
