@@ -65,7 +65,7 @@ def assert_context_uses_professional_status_format(context: str) -> None:
     assert "Subagent orchestration gate result:" not in context, context
     assert "Subagent orchestration gate quiet hint" not in context, context
     assert "Preliminary classification:" not in context, context
-    assert "Compatibility rules:" not in context, context
+    assert "Compatibility rules" not in context, context
     assert BOUNDARY_SENTENCE not in context, context
 
 
@@ -905,11 +905,8 @@ def test_classifier_preserves_conditional_orchestration() -> None:
     assert context is not None, context
     assert "check" in context.lower(), context
     assert BOUNDARY_SENTENCE not in context
-    assert "do not ask the user whether orchestration is preferable" in context.lower()
-    assert "do not ask for separate authorization before bounded delegation" in context.lower()
-    assert "decide internally" in context.lower()
-    assert "do not override any existing orchestration, routing, bootstrap, skill-selection, or agent-management framework" in context.lower()
-    assert "complement or fallback" in context.lower()
+    assert "evaluate the execution shape internally" in context.lower()
+    assert "use subagents only if the task decomposes cleanly" in context.lower()
 
 
 def test_classifier_detects_broad_investigations() -> None:
@@ -922,9 +919,9 @@ def test_classifier_detects_broad_investigations() -> None:
         assert context is not None, prompt
         assert "use-subagent-orchestrator" in context.lower(), (prompt, context)
         assert BOUNDARY_SENTENCE not in context
-        assert "prefer single-thread or sequential-plan" in context.lower(), context
-        assert "bounded independent parallel tracks" in context.lower(), context
-        assert "standing authorization" in context.lower(), context
+        assert "inline execution gate" in context.lower(), context
+        assert "spawn subagents only when the work decomposes cleanly" in context.lower(), context
+        assert "proceed single-threaded or with a sequential plan" in context.lower(), context
 
 
 def test_classifier_distinguishes_output_sweeps_from_formal_reviews() -> None:
@@ -970,7 +967,7 @@ def test_classifier_returns_only_result_for_default_and_simple_prompts() -> None
     for prompt, expected_result in cases:
         context = assert_context_reports_result_and_reason(prompt, expected_result)
         assert BOUNDARY_SENTENCE not in context, (prompt, context)
-        assert "Compatibility rules:" not in context, (prompt, context)
+        assert "Compatibility rules" not in context, (prompt, context)
         assert "Subagent orchestration gate quiet hint" not in context, (prompt, context)
 
 

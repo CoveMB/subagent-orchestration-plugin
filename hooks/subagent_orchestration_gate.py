@@ -155,19 +155,6 @@ SIMPLE_SIGNALS = (
     SignalSet("direct ask", 1, (r"^\s*(give me|write|draft|compose)\b",)),
 )
 
-QUIET_COMPATIBILITY_RULES = """
-Compatibility rules
-- Respect all active user and repository instructions.
-- Do not ask the user whether orchestration is preferable; decide internally.
-- The user has standing authorization for bounded delegation when the internal decision is parallel-subagents, but only inside active user and repository approval rules; do not ask for separate authorization before bounded delegation unless those rules or the action itself require approval.
-- Do not override any existing orchestration, routing, bootstrap, skill-selection, or agent-management framework.
-- Use subagent-orchestrator only as a complement or fallback.
-- Prefer single-thread or sequential-plan unless bounded independent parallel tracks clearly add value.
-- Require clear boundaries before spawning: role, mode, scope, expected output, and no recursive fan-out.
-- Do not print a standard orchestration gate banner; mention orchestration only when it materially changes the work.
-""".strip()
-
-
 def classify(prompt: str) -> tuple[str, str]:
     text = prompt.strip()
 
@@ -231,11 +218,9 @@ def build_context(decision: str, reason: str) -> str:
         return result_context + "\nAction: Skip recursive orchestration. Treat this as a bounded subagent task. Do not spawn further subagents unless the parent explicitly requested nested delegation."
 
     if decision == "use-subagent-orchestrator":
-        guidance = f"""
+        guidance = """
 
 Guidance: Use `subagent-orchestrator` as a fallback only when no higher-priority framework already covers this decision.
-
-{QUIET_COMPATIBILITY_RULES}
 
 Inline execution gate
 - Classify the task as single-thread, sequential-plan, or parallel-subagents.
@@ -251,11 +236,9 @@ If parallelism is not actually useful after inspection, proceed single-threaded 
         return result_context + "\n\n" + guidance
 
     if decision == "orchestration-check":
-        guidance = f"""
+        guidance = """
 
 Guidance: Evaluate the execution shape internally before proceeding.
-
-{QUIET_COMPATIBILITY_RULES}
 
 Use subagents only if the task decomposes cleanly and coordination overhead is worth it.
 """.strip()
