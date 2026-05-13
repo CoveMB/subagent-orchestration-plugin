@@ -27,6 +27,19 @@ class SignalSet:
     patterns: tuple[str, ...]
 
 
+CUSTOM_AGENT_NAMES = (
+    "so_mapper",
+    "so_reviewer",
+    "so_tester",
+    "so_reproducer",
+    "so_docs_researcher",
+    "so_designer",
+    "so_implementer",
+)
+CUSTOM_AGENT_PATTERN = "(?:" + "|".join(re.escape(name) for name in CUSTOM_AGENT_NAMES) + ")"
+SURFACE_TERM_PATTERN = r"(?:frontend|backend|api|web|server|client|database|db|service)s?"
+
+
 def count_signals(text: str, signals: Iterable[SignalSet]) -> tuple[int, list[str]]:
     score = 0
     hits: list[str] = []
@@ -42,10 +55,15 @@ def count_signals(text: str, signals: Iterable[SignalSet]) -> tuple[int, list[st
 OPTOUT_SIGNALS = (
     SignalSet("explicit user opt-out", 99, (
         r"\bdo not use sub[- ]?agents?\b",
+        r"\bdon['’]?t use sub[- ]?agents?\b",
+        r"\bdont use sub[- ]?agents?\b",
         r"\bno sub[- ]?agents?\b",
         r"\bwithout sub[- ]?agents?\b",
         r"\bno orchestrat(?:ion|e)\b",
+        r"\bdon['’]?t orchestrat(?:e|ion)\b",
+        r"\bdont orchestrat(?:e|ion)\b",
         r"\bdo not orchestrat(?:e|ion)\b",
+        r"\bdo not use orchestrat(?:ion|e)\b",
         r"\bwork linearly\b",
         r"\blinear execution\b",
         r"\bsingle[- ]?thread(?:ed)? only\b",
@@ -56,16 +74,31 @@ RECURSION_GUARD_SIGNALS = (
     SignalSet("child-agent recursion guard", 99, (
         r"\bdispatched as (?:a )?sub[- ]?agent\b",
         r"\byou are a sub[- ]?agent\b",
+        rf"\byou are {CUSTOM_AGENT_PATTERN}\b",
         r"\bbounded sub[- ]?agent task\b",
+        rf"\btask for {CUSTOM_AGENT_PATTERN}\b",
         r"\bparent agent\b.*\basked\b",
     )),
 )
 
+CONDITIONAL_ORCHESTRATION_SIGNALS = (
+    SignalSet("conditional orchestration", 4, (
+        r"\b(?:sub[- ]?agents?|orchestrat(?:ion|e))\b.*\bunless (?:useful|valuable|needed|necessary|helpful)\b",
+        r"\b(?:use|spawn|run)\b.*\b(?:sub[- ]?agents?|parallel agents?)\b.*\bonly if (?:useful|valuable|needed|necessary|helpful)\b",
+        r"\b(?:sub[- ]?agents?|parallel agents?|orchestrat(?:ion|e))\b.*\bonly if (?:useful|valuable|needed|necessary|helpful)\b",
+    )),
+)
+
 COMPLEX_SIGNALS = (
-    SignalSet("debugging/root-cause", 3, (r"\bdebug\b", r"root cause", r"failing", r"flaky", r"regression", r"race condition")),
+    SignalSet("debugging/root-cause", 3, (r"\bdebug\b", r"\binvestigat(?:e|ion)\b", r"root cause", r"\bfail(?:s|ed|ing|ure)?\b", r"flaky", r"regression", r"race condition", r"\bcrash(?:es|ed|ing)?\b", r"\berrors?\b")),
     SignalSet("review/audit", 3, (r"\breview\b", r"audit", r"security", r"threat", r"vulnerability", r"risk")),
     SignalSet("architecture/refactor", 3, (r"architecture", r"refactor", r"migration", r"rewrite", r"large change", r"multi[- ]?file", r"multi[- ]?module", r"multi[- ]?service")),
-    SignalSet("tests/verification", 2, (r"\btests?\b", r"coverage", r"verify", r"reproduce", r"benchmark", r"performance")),
+    SignalSet("multi-surface scope", 3, (
+        rf"\bacross\b.*\b{SURFACE_TERM_PATTERN}\b",
+        rf"\b{SURFACE_TERM_PATTERN}\b.*\band\b.*\b{SURFACE_TERM_PATTERN}\b",
+        rf"\bspanning\b.*\b{SURFACE_TERM_PATTERN}\b",
+    )),
+    SignalSet("tests/verification", 2, (r"\btests?\b", r"coverage", r"verify", r"reproduce", r"benchmark", r"performance", r"\bci\b")),
     SignalSet("research/docs", 2, (r"docs?", r"documentation", r"api", r"version", r"latest", r"framework", r"library")),
     SignalSet("comparison/options", 2, (r"compare", r"options", r"trade[- ]?offs?", r"alternatives?", r"approaches?")),
     SignalSet("explicit subagents", 5, (r"sub[- ]?agents?", r"parallel agents?", r"orchestrat", r"delegate", r"split .*agents?")),
@@ -82,7 +115,8 @@ def classify(prompt: str) -> tuple[str, str]:
     text = prompt.strip()
 
     optout_score, optout_hits = count_signals(text, OPTOUT_SIGNALS)
-    if optout_score:
+    conditional_score, conditional_hits = count_signals(text, CONDITIONAL_ORCHESTRATION_SIGNALS)
+    if optout_score and not conditional_score:
         return (
             "orchestration-opt-out",
             "User explicitly requested no subagent orchestration: " + ", ".join(sorted(set(optout_hits))) + ".",
@@ -93,6 +127,12 @@ def classify(prompt: str) -> tuple[str, str]:
         return (
             "recursion-guard",
             "Prompt appears to be a bounded child-agent task: " + ", ".join(sorted(set(recursion_hits))) + ".",
+        )
+
+    if conditional_score:
+        return (
+            "orchestration-check",
+            "User requested conditional orchestration: " + ", ".join(sorted(set(conditional_hits))) + ".",
         )
 
     complex_score, complex_hits = count_signals(text, COMPLEX_SIGNALS)

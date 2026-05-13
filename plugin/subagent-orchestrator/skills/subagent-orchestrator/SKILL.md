@@ -71,6 +71,52 @@ Subagents:
 
 Then spawn the agents, wait for all results, and synthesize before acting.
 
+## Execution Runbook
+
+Use this order when the decision is `parallel-subagents`:
+
+1. State the orchestration decision, reason, plan, and bounded subagents.
+2. Spawn the smallest useful set of read-only agents first.
+3. Give each agent one self-contained task, explicit mode, expected output, and no permission to fan out.
+4. Keep implementation agents for later unless the user already requested code changes and write scopes are disjoint.
+5. Continue local work only on non-overlapping context while agents run.
+6. Wait for all agents that affect the next decision.
+7. Synthesize agreed facts, conflicts, files, risks, and tests before any edits.
+8. Ask before code changes unless the user clearly requested implementation.
+
+### Spawn Template
+
+```text
+Spawn <agent-name>:
+- mode: read-only | workspace-write
+- scope: <files, subsystem, or question>
+- task: <specific bounded task>
+- constraints: do not edit files; do not spawn more agents; report uncertainty
+- expected output: facts, file paths, evidence, risks, tests, confidence
+```
+
+For workspace-write tasks, add:
+
+```text
+- write scope: <exact files/modules>
+- coordination: other agents may be working; do not revert unrelated edits
+- verification: <targeted commands or manual checks>
+```
+
+### Agent Task Templates
+
+- `so_mapper`: Map execution paths, affected files, call sites, dependencies, and likely change boundaries. Return evidence with file paths and uncertainty.
+- `so_reviewer`: Review correctness, security, regressions, hidden coupling, and missing tests. Return only real findings with severity and recommended next action.
+- `so_tester`: Identify targeted tests, expected failures, verification commands, and remaining coverage gaps. Run commands only when safe for a read-only workspace.
+- `so_reproducer`: Reproduce failures, collect logs, and manage temporary scratch artifacts after read-only test planning narrows the scope.
+- `so_docs_researcher`: Verify external API, framework, or version-specific behavior from authoritative sources. Separate documented facts from inference.
+- `so_designer`: Compare implementation options, tradeoffs, migration risks, and testability. Recommend the smallest reversible plan.
+- `so_implementer`: Apply one bounded patch after mapping/review narrows the change. Use only with explicit write scope and verification requirements.
+
+### Fallback When Custom Agents Are Unavailable
+
+If a named custom agent cannot be spawned, use the closest available read-only agent or perform that subtask locally. Preserve the same boundaries: one task, no recursive fan-out, explicit evidence, and synthesis before action. Do not fabricate agent results.
+
 ## Default patterns
 
 ### Debugging
@@ -78,7 +124,7 @@ Then spawn the agents, wait for all results, and synthesize before acting.
 Prefer read-only agents first:
 
 - `explorer` or `so_mapper`: map relevant code paths and likely failure location.
-- `reproducer`: reproduce the failure and collect logs, if safe.
+- `so_reproducer`: reproduce the failure and collect logs, if safe.
 - `so_tester`: identify targeted tests and missing test coverage.
 - `so_reviewer`: inspect likely fix risks.
 

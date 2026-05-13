@@ -8,7 +8,7 @@
       "name": "subagent-orchestrator",
       "source": {
         "source": "local",
-        "path": "./plugins/subagent-orchestrator"
+        "path": "./plugin/subagent-orchestrator"
       },
       "policy": {
         "installation": "AVAILABLE",

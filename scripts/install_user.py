@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """Install the subagent orchestration starter kit into the current user's Codex config.
 
-Default behavior is conservative:
+Default behavior installs and activates the prompt gate:
 - installs the skills directly to ~/.agents/skills/subagent-orchestrator and ~/.agents/skills/using-subagent-orchestrator
 - installs custom agents to ~/.codex/agents
 - installs the UserPromptSubmit hook script to ~/.codex/hooks
 - appends AGENTS guidance to ~/.codex/AGENTS.md if not already present
-- DOES NOT edit ~/.codex/config.toml unless --patch-config is passed
+- safely patches ~/.codex/config.toml unless --no-patch-config is passed
 
 Optional:
 - --plugin installs the plugin folder and adds/updates a local personal marketplace
-- --patch-config tries to safely merge hook + subagent settings into ~/.codex/config.toml
+- --no-patch-config skips config changes
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -25,12 +26,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", HOME / ".codex"))
+COPY_IGNORE_PATTERNS = (
+    ".DS_Store",
+    "__pycache__",
+    "*.pyc",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".coverage",
+    "coverage",
+    "dist",
+    "build",
+    "*.egg-info",
+    ".venv",
+    "node_modules",
+)
 
 
 def copytree_replace(src: Path, dst: Path) -> None:
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*COPY_IGNORE_PATTERNS))
 
 
 def copy_file(src: Path, dst: Path, executable: bool = False) -> None:
@@ -97,9 +113,9 @@ def install_plugin_marketplace() -> None:
             backup = marketplace_path.with_suffix(".json.bak")
             shutil.copy2(marketplace_path, backup)
             print(f"existing marketplace was not valid JSON; backed up to {backup}")
-            data = {"name": "local-personal-codex-plugins", "interface": {"displayName": "Local Personal Codex Plugins"}, "plugins": []}
+            data = empty_marketplace()
     else:
-        data = {"name": "local-personal-codex-plugins", "interface": {"displayName": "Local Personal Codex Plugins"}, "plugins": []}
+        data = empty_marketplace()
 
     data.setdefault("name", "local-personal-codex-plugins")
     data.setdefault("interface", {"displayName": "Local Personal Codex Plugins"})
@@ -115,6 +131,14 @@ def install_plugin_marketplace() -> None:
     print(f"updated marketplace: {marketplace_path}")
 
 
+def empty_marketplace() -> dict[str, object]:
+    return {
+        "name": "local-personal-codex-plugins",
+        "interface": {"displayName": "Local Personal Codex Plugins"},
+        "plugins": [],
+    }
+
+
 def toml_quote(value: str) -> str:
     return json.dumps(value)
 
@@ -122,6 +146,10 @@ def toml_quote(value: str) -> str:
 def has_table(lines: list[str], table: str) -> bool:
     needle = f"[{table}]"
     return any(line.strip() == needle for line in lines)
+
+
+def is_exact_key_line(line: str, key: str) -> bool:
+    return bool(re.match(rf"^\s*{re.escape(key)}\s*=", line))
 
 
 def upsert_simple_key(lines: list[str], table: str, key: str, value: str) -> list[str]:
@@ -143,7 +171,7 @@ def upsert_simple_key(lines: list[str], table: str, key: str, value: str) -> lis
                 out.append(f"{key} = {value}\n")
                 inserted = True
             in_table = stripped == table_header
-        if in_table and stripped.startswith(f"{key}") and "=" in stripped:
+        if in_table and is_exact_key_line(line, key):
             out.append(f"{key} = {value}\n")
             updated = True
         else:
@@ -151,6 +179,13 @@ def upsert_simple_key(lines: list[str], table: str, key: str, value: str) -> lis
     if in_table and not updated and not inserted:
         out.append(f"{key} = {value}\n")
     return out
+
+
+def has_active_command_line(text: str, command_line: str) -> bool:
+    return any(
+        line.strip() == command_line and not line.lstrip().startswith("#")
+        for line in text.splitlines()
+    )
 
 
 def patch_config(hook_path: Path) -> None:
@@ -169,21 +204,22 @@ def patch_config(hook_path: Path) -> None:
     lines = upsert_simple_key(lines, "agents", "max_depth", "1")
 
     command = f"{sys.executable} {hook_path}"
+    command_line = f"command = {toml_quote(command)}"
     hook_block = (
         "\n[[hooks.UserPromptSubmit]]\n"
         "[[hooks.UserPromptSubmit.hooks]]\n"
         "type = \"command\"\n"
-        f"command = {toml_quote(command)}\n"
+        f"{command_line}\n"
         "timeout = 5\n"
         "statusMessage = \"Evaluating subagent orchestration\"\n"
     )
     text = "".join(lines)
-    if "subagent_orchestration_gate.py" not in text:
+    if not has_active_command_line(text, command_line):
         if text and not text.endswith("\n"):
             text += "\n"
         text += hook_block
     else:
-        print("hook config already appears to be present; not appending duplicate hook block")
+        print("hook config already contains the active command; not appending duplicate hook block")
 
     config.write_text(text, encoding="utf-8")
     print(f"patched config: {config}")
@@ -192,7 +228,8 @@ def patch_config(hook_path: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plugin", action="store_true", help="Also install the local plugin folder and personal marketplace entry.")
-    parser.add_argument("--patch-config", action="store_true", help="Try to merge hook + subagent settings into ~/.codex/config.toml.")
+    parser.add_argument("--patch-config", action="store_true", help="Compatibility flag. Config patching is enabled by default.")
+    parser.add_argument("--no-patch-config", action="store_true", help="Skip hook + subagent settings in ~/.codex/config.toml.")
     args = parser.parse_args()
 
     install_skill()
@@ -201,10 +238,10 @@ def main() -> int:
     install_agents_md()
     if args.plugin:
         install_plugin_marketplace()
-    if args.patch_config:
-        patch_config(hook)
-    else:
+    if args.no_patch_config:
         print("config.toml not modified. See snippets/config.*.toml or run with --patch-config.")
+    else:
+        patch_config(hook)
 
     print("Restart Codex or start a new thread after installing.")
     return 0
