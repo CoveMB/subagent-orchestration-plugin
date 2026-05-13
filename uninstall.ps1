@@ -1,3 +1,3 @@
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
-python scripts/uninstall_user.py
+python scripts/install_user.py --uninstall

@@ -119,6 +119,18 @@ PowerShell:
 ./install.ps1 -DryRun
 ```
 
+Remove owned user-scope files and hook config entries:
+
+```bash
+./install.sh --uninstall
+```
+
+PowerShell:
+
+```powershell
+./install.ps1 -Uninstall
+```
+
 ### 3. Project-scoped activation
 
 Project scope writes only inside the repository root. It never writes `~/.codex`, never writes `~/.agents`, never patches `~/.codex/config.toml`, never appends `~/.codex/AGENTS.md`, never installs hooks globally, and never enables plugin state globally.
@@ -126,13 +138,13 @@ Project scope writes only inside the repository root. It never writes `~/.codex`
 Activate the gate for Codex sessions opened from a trusted project:
 
 ```bash
-./install.sh --scope project --activate-gate --copy-skills
+./install.sh --scope project --activate-gate
 ```
 
 PowerShell:
 
 ```powershell
-./install.ps1 -Scope project -ActivateGate -CopySkills
+./install.ps1 -Scope project -ActivateGate
 ```
 
 This creates or updates repo-local files:
@@ -146,12 +158,12 @@ This creates or updates repo-local files:
 Optional project-only additions:
 
 ```bash
-./install.sh --scope project --activate-gate --copy-skills --with-project-agents
-./install.sh --scope project --available-only --copy-skills --with-repo-marketplace
-./install.sh --scope project --available-only --copy-skills --append-project-agents-md
+./install.sh --scope project --activate-gate --with-project-agents
+./install.sh --scope project --with-repo-marketplace
+./install.sh --scope project --append-project-agents-md
 ```
 
-Use `--available-only` to install repo-local skills without activating the prompt gate. Use `--dry-run` to print created, patched, copied, symlinked, and backed-up paths without changing files. Use project uninstall to remove manifest-owned activation files:
+Project scope installs repo-local skills by default. Omit `--activate-gate` to make skills available without activating the prompt gate. Use `--dry-run` to print created, patched, copied, symlinked, and backed-up paths without changing files. Use project uninstall to remove manifest-owned activation files:
 
 ```bash
 ./install.sh --scope project --repo-root /path/to/repo --uninstall
@@ -182,7 +194,7 @@ This links:
   -> vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator/skills/subagent-orchestrator
 ```
 
-If symlinks fail, the installer falls back to copying. Pass `--copy-skills` to force copies.
+If symlinks fail, the installer falls back to copying. Omit `--link-skills` to use copies.
 
 The repo marketplace option adds or updates `.agents/plugins/marketplace.json` with a local plugin path:
 
@@ -242,7 +254,7 @@ Copy them manually into `~/.codex/agents` or `.codex/agents` only when you want 
 ## Smoke test the hook
 
 ```bash
-python3 tests/test_hook.py
+bash scripts/check.sh
 ```
 
 Expected:

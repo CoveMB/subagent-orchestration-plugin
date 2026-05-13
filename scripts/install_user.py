@@ -15,9 +15,17 @@ import os
 import shutil
 import stat
 import subprocess
-import tomllib
 from pathlib import Path
 from typing import Any
+
+from file_ops import backup_path, content_matches, next_backup_path, path_exists, remove_path
+from toml_ops import (
+    has_non_table_toml_content,
+    read_toml_value,
+    remove_toml_table_key,
+    set_toml_table_key,
+    toml_literal,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 HOME = Path.home()
@@ -62,21 +70,33 @@ PROJECT_AGENTS_SECTION = f"""
 
 
 def copytree_replace(src: Path, dst: Path, dry_run: bool, label: str) -> None:
+    if content_matches(src, dst, COPY_IGNORE_PATTERNS):
+        if dry_run:
+            print(f"would leave unchanged {label}: {dst}")
+        return
     if dry_run:
+        backup_path(dst, True, label)
         print(f"would install {label}: {dst}")
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        shutil.rmtree(dst)
+    backup_path(dst, False, label)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*COPY_IGNORE_PATTERNS))
     print(f"installed {label}: {dst}")
 
 
 def copy_file(src: Path, dst: Path, dry_run: bool, label: str, executable: bool = False) -> None:
+    if content_matches(src, dst, COPY_IGNORE_PATTERNS):
+        if dry_run:
+            print(f"would leave unchanged {label}: {dst}")
+        elif executable:
+            dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return
     if dry_run:
+        backup_path(dst, True, label)
         print(f"would install {label}: {dst}")
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
+    backup_path(dst, False, label)
     shutil.copy2(src, dst)
     if executable:
         dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -164,10 +184,12 @@ def load_project_manifest(repo_root: Path) -> dict[str, Any]:
         return new_manifest(repo_root)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return new_manifest(repo_root)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"error: install manifest is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"error: install manifest must be a JSON object: {path}")
     if data.get("plugin") != PLUGIN_NAME:
-        return new_manifest(repo_root)
+        raise SystemExit(f"error: install manifest is not owned by {PLUGIN_NAME}: {path}")
     for key, default_value in new_manifest(repo_root).items():
         data.setdefault(key, default_value)
     return data
@@ -184,22 +206,6 @@ def record_installed_path(manifest: dict[str, Any], repo_root: Path, path: Path)
 def is_manifest_owned(manifest: dict[str, Any], repo_root: Path, path: Path) -> bool:
     relative_path = repo_relative_path(repo_root, path)
     return relative_path in manifest.get("created_paths", []) or relative_path in manifest.get("installed_paths", [])
-
-
-def path_exists(path: Path) -> bool:
-    return path.exists() or path.is_symlink()
-
-
-def next_backup_path(path: Path) -> Path:
-    first_backup = path.with_name(path.name + ".bak")
-    if not path_exists(first_backup):
-        return first_backup
-    index = 1
-    while True:
-        candidate = path.with_name(f"{path.name}.bak.{index}")
-        if not path_exists(candidate):
-            return candidate
-        index += 1
 
 
 def backup_existing_path(
@@ -224,19 +230,6 @@ def backup_existing_path(
     })
     print(f"backed up existing {label}: {path} -> {backup_path}")
     return backup_path
-
-
-def remove_path(path: Path, dry_run: bool, label: str) -> None:
-    if not path_exists(path):
-        return
-    if dry_run:
-        print(f"would remove {label}: {path}")
-        return
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-    elif path.is_dir():
-        shutil.rmtree(path)
-    print(f"removed {label}: {path}")
 
 
 def prepare_project_destination(
@@ -410,104 +403,6 @@ def remove_marked_block(text: str, start_marker: str, end_marker: str) -> str:
     return "\n\n".join(pieces) + ("\n" if pieces else "")
 
 
-def table_header_name(line: str) -> str | None:
-    stripped = line.strip()
-    if not stripped.startswith("[") or not stripped.endswith("]"):
-        return None
-    if stripped.startswith("[[") and stripped.endswith("]]"):
-        return stripped[2:-2].strip()
-    return stripped[1:-1].strip()
-
-
-def line_opens_toml_table(line: str) -> bool:
-    stripped = line.strip()
-    return stripped.startswith("[") and stripped.endswith("]")
-
-
-def find_table_bounds(lines: list[str], table_name: str) -> tuple[int, int] | None:
-    start_index: int | None = None
-    for index, line in enumerate(lines):
-        if table_header_name(line) == table_name and line.strip() == f"[{table_name}]":
-            start_index = index
-            break
-    if start_index is None:
-        return None
-    end_index = len(lines)
-    for index in range(start_index + 1, len(lines)):
-        if line_opens_toml_table(lines[index]):
-            end_index = index
-            break
-    return start_index, end_index
-
-
-def set_toml_table_key(text: str, table_name: str, key: str, value: str) -> str:
-    lines = text.splitlines()
-    bounds = find_table_bounds(lines, table_name)
-    key_line = f"{key} = {value}"
-    if bounds is None:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.extend([f"[{table_name}]", key_line])
-        return "\n".join(lines).rstrip() + "\n"
-
-    start_index, end_index = bounds
-    for index in range(start_index + 1, end_index):
-        stripped = lines[index].strip()
-        if stripped.startswith("#"):
-            continue
-        if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
-            lines[index] = key_line
-            return "\n".join(lines).rstrip() + "\n"
-    lines.insert(end_index, key_line)
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def remove_toml_table_key(text: str, table_name: str, key: str) -> str:
-    lines = text.splitlines()
-    bounds = find_table_bounds(lines, table_name)
-    if bounds is None:
-        return text
-    start_index, end_index = bounds
-    output: list[str] = []
-    for index, line in enumerate(lines):
-        if start_index < index < end_index:
-            stripped = line.strip()
-            if not stripped.startswith("#") and (stripped.startswith(f"{key} ") or stripped.startswith(f"{key}=")):
-                continue
-        output.append(line)
-    return "\n".join(output).rstrip() + "\n"
-
-
-def has_non_table_toml_content(text: str) -> bool:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or line_opens_toml_table(line):
-            continue
-        return True
-    return False
-
-
-def read_toml_value(text: str, table_name: str, key: str) -> dict[str, Any]:
-    try:
-        data = tomllib.loads(text) if text.strip() else {}
-    except tomllib.TOMLDecodeError:
-        return {"exists": False, "value": None}
-    table = data.get(table_name)
-    if isinstance(table, dict) and key in table:
-        return {"exists": True, "value": table[key]}
-    return {"exists": False, "value": None}
-
-
-def toml_literal(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, str):
-        return json.dumps(value)
-    raise ValueError(f"unsupported TOML value for restore: {value!r}")
-
-
 def remember_config_value(
     manifest: dict[str, Any],
     text: str,
@@ -575,60 +470,8 @@ def restore_project_config(repo_root: Path, manifest: dict[str, Any], dry_run: b
 
 def project_hook_wrapper(relative_vendor_root: Path) -> str:
     relative_hook = (relative_vendor_root / "hooks" / HOOK_FILE_NAME).as_posix()
-    return f'''#!/usr/bin/env python3
-from __future__ import annotations
-
-import json
-import subprocess
-import sys
-from pathlib import Path
-
-RELATIVE_VENDOR_HOOK = {relative_hook!r}
-
-
-def find_repo_root() -> Path:
-    proc = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode == 0 and proc.stdout.strip():
-        return Path(proc.stdout.strip())
-    return Path(__file__).resolve().parents[2]
-
-
-def print_skip(reason: str) -> int:
-    print(json.dumps({{
-        "hookSpecificOutput": {{
-            "hookEventName": "UserPromptSubmit",
-            "result": "skip",
-            "reason": reason,
-        }}
-    }}))
-    return 0
-
-
-def main() -> int:
-    hook_path = find_repo_root() / RELATIVE_VENDOR_HOOK
-    if not hook_path.exists():
-        return print_skip(f"vendored subagent orchestration hook is missing: {{hook_path}}")
-    proc = subprocess.run(
-        ["python3", str(hook_path)],
-        input=sys.stdin.read(),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return print_skip("vendored subagent orchestration hook failed open")
-    print(proc.stdout, end="")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-'''
+    template = (ROOT / "templates" / "project_hook_wrapper.py").read_text(encoding="utf-8")
+    return template.replace("__RELATIVE_VENDOR_HOOK__", repr(relative_hook))
 
 
 def install_project_hook(
@@ -672,7 +515,6 @@ def install_project_skills(
     manifest: dict[str, Any],
     dry_run: bool,
     link_skills: bool,
-    copy_skills: bool,
 ) -> None:
     skills_src = source_root / "plugin" / PLUGIN_NAME / "skills"
     skills_dst = repo_root / ".agents" / "skills"
@@ -682,7 +524,7 @@ def install_project_skills(
     for skill_name in [USING_SKILL_NAME, PLUGIN_NAME]:
         src = skills_src / skill_name
         dst = skills_dst / skill_name
-        if can_link_skills and not copy_skills:
+        if can_link_skills:
             if link_project_tree(src, dst, repo_root, manifest, dry_run, "project skill"):
                 continue
         copy_project_tree(src, dst, repo_root, manifest, dry_run, "project skill")
@@ -738,6 +580,24 @@ def default_marketplace() -> dict[str, Any]:
     }
 
 
+def load_marketplace(path: Path, label: str) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not text.strip():
+        return default_marketplace()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"error: {label} marketplace is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"error: {label} marketplace must be a JSON object: {path}")
+    plugins = data.setdefault("plugins", [])
+    if not isinstance(plugins, list):
+        raise SystemExit(f"error: {label} marketplace plugins must be a list: {path}")
+    if any(not isinstance(plugin, dict) for plugin in plugins):
+        raise SystemExit(f"error: {label} marketplace plugins must be objects: {path}")
+    return data
+
+
 def patch_project_marketplace(
     repo_root: Path,
     source_root: Path,
@@ -746,7 +606,7 @@ def patch_project_marketplace(
 ) -> None:
     path = repo_root / ".agents" / "plugins" / "marketplace.json"
     original_text = path.read_text(encoding="utf-8") if path.exists() else ""
-    data = json.loads(original_text) if original_text.strip() else default_marketplace()
+    data = load_marketplace(path, "repo")
     plugins = data.setdefault("plugins", [])
     previous_plugin = next((plugin for plugin in plugins if plugin.get("name") == PLUGIN_NAME), None)
     if "marketplace_previous_plugin" not in manifest:
@@ -778,7 +638,7 @@ def restore_project_marketplace(repo_root: Path, manifest: dict[str, Any], dry_r
     if not path.exists():
         return
     original_text = path.read_text(encoding="utf-8")
-    data = json.loads(original_text) if original_text.strip() else default_marketplace()
+    data = load_marketplace(path, "repo")
     previous_plugin = manifest.get("marketplace_previous_plugin")
     plugins = [plugin for plugin in data.get("plugins", []) if plugin.get("name") != PLUGIN_NAME]
     if previous_plugin:
@@ -911,7 +771,7 @@ def install_project(args: argparse.Namespace) -> int:
     validate_source_root(source_root)
     manifest = load_project_manifest(repo_root)
 
-    install_project_skills(repo_root, source_root, manifest, args.dry_run, args.link_skills, args.copy_skills)
+    install_project_skills(repo_root, source_root, manifest, args.dry_run, args.link_skills)
 
     if args.activate_gate:
         install_project_hook(repo_root, source_root, manifest, args.dry_run, bool(args.from_vendor))
@@ -940,17 +800,167 @@ def install_user(args: argparse.Namespace) -> int:
     return 0
 
 
+def user_installed_targets() -> list[tuple[Path, Path, str]]:
+    skills_src = ROOT / "plugin" / PLUGIN_NAME / "skills"
+    targets = [
+        (HOME / ".agents" / "skills" / PLUGIN_NAME, skills_src / PLUGIN_NAME, "skill"),
+        (HOME / ".agents" / "skills" / USING_SKILL_NAME, skills_src / USING_SKILL_NAME, "skill"),
+        (CODEX_HOME / "hooks" / HOOK_FILE_NAME, ROOT / "hooks" / HOOK_FILE_NAME, "hook"),
+        (CODEX_HOME / "plugins" / PLUGIN_NAME, ROOT / "plugin" / PLUGIN_NAME, "plugin"),
+    ]
+    agent_targets = [
+        (CODEX_HOME / "agents" / path.name, path, "custom agent")
+        for path in sorted((ROOT / "custom-agents").glob("*.toml"))
+    ]
+    return targets + agent_targets
+
+
+def remove_matching_user_path(path: Path, source: Path, label: str, dry_run: bool) -> None:
+    if not path_exists(path):
+        print(f"not found: {path}")
+        return
+    if not content_matches(source, path, COPY_IGNORE_PATTERNS):
+        print(f"left different {label} unchanged: {path}")
+        return
+    remove_path(path, dry_run, label)
+
+
+def copy_backup(path: Path, dry_run: bool, label: str) -> Path | None:
+    return backup_path(path, dry_run, label, move=False)
+
+
+def line_opens_table(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("[") and stripped.endswith("]")
+
+
+def block_references_hook(block: list[str]) -> bool:
+    return any(HOOK_FILE_NAME in line and not line.lstrip().startswith("#") for line in block)
+
+
+def split_user_prompt_hook_block(block: list[str]) -> tuple[list[str], list[list[str]]]:
+    header: list[str] = []
+    hooks: list[list[str]] = []
+    current_hook: list[str] | None = None
+    for line in block:
+        if line.strip() == "[[hooks.UserPromptSubmit.hooks]]":
+            if current_hook is not None:
+                hooks.append(current_hook)
+            current_hook = [line]
+            continue
+        if current_hook is None:
+            header.append(line)
+        else:
+            current_hook.append(line)
+    if current_hook is not None:
+        hooks.append(current_hook)
+    return header, hooks
+
+
+def remove_owned_user_prompt_hook_entries(block: list[str]) -> list[str]:
+    header, hooks = split_user_prompt_hook_block(block)
+    kept_hooks = [hook for hook in hooks if not block_references_hook(hook)]
+    if hooks and not kept_hooks:
+        return []
+    if hooks:
+        return header + [line for hook in kept_hooks for line in hook]
+    if block_references_hook(block):
+        return []
+    return block
+
+
+def remove_hook_config_block(text: str) -> str:
+    lines = text.splitlines(True)
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() != "[[hooks.UserPromptSubmit]]":
+            output.append(lines[index])
+            index += 1
+            continue
+
+        block: list[str] = []
+        while index < len(lines):
+            if block and line_opens_table(lines[index]) and lines[index].strip() != "[[hooks.UserPromptSubmit.hooks]]":
+                break
+            block.append(lines[index])
+            index += 1
+        output.extend(remove_owned_user_prompt_hook_entries(block))
+    return "".join(output)
+
+
+def remove_user_config_entries(dry_run: bool) -> None:
+    config = CODEX_HOME / "config.toml"
+    if not config.exists():
+        print(f"not found: {config}")
+        return
+    original = config.read_text(encoding="utf-8")
+    updated = remove_hook_config_block(original)
+    if updated == original:
+        print(f"no owned hook config found: {config}")
+        return
+    backup = copy_backup(config, dry_run, "config")
+    if not dry_run:
+        config.write_text(updated, encoding="utf-8")
+    print(f"removed owned hook config from: {config} (backup: {backup})")
+
+
+def remove_user_agents_guidance(dry_run: bool) -> None:
+    agents_file = CODEX_HOME / "AGENTS.md"
+    if not agents_file.exists():
+        print(f"not found: {agents_file}")
+        return
+    snippet = (ROOT / "snippets" / "AGENTS.subagent-orchestration.md").read_text(encoding="utf-8").strip()
+    original = agents_file.read_text(encoding="utf-8")
+    updated = original.replace(snippet, "").strip() + "\n"
+    if updated == original:
+        print(f"no owned AGENTS guidance found: {agents_file}")
+        return
+    backup = copy_backup(agents_file, dry_run, "AGENTS guidance")
+    if not dry_run:
+        agents_file.write_text(updated, encoding="utf-8")
+    print(f"removed owned AGENTS guidance from: {agents_file} (backup: {backup})")
+
+
+def remove_user_marketplace_entry(dry_run: bool) -> None:
+    path = HOME / ".agents" / "plugins" / "marketplace.json"
+    if not path.exists():
+        print(f"not found: {path}")
+        return
+    try:
+        data = load_marketplace(path, "user")
+    except SystemExit as exc:
+        print(str(exc).removeprefix("error: ") + f"; leaving unchanged: {path}")
+        return
+    plugins = data.get("plugins", [])
+    remaining_plugins = [plugin for plugin in plugins if plugin.get("name") != PLUGIN_NAME]
+    if remaining_plugins == plugins:
+        print(f"no owned marketplace entry found: {path}")
+        return
+    data["plugins"] = remaining_plugins
+    backup = copy_backup(path, dry_run, "marketplace")
+    if not dry_run:
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    print(f"removed marketplace entry from: {path} (backup: {backup})")
+
+
+def uninstall_user(dry_run: bool) -> int:
+    for path, source, label in user_installed_targets():
+        remove_matching_user_path(path, source, label, dry_run)
+    remove_user_agents_guidance(dry_run)
+    remove_user_config_entries(dry_run)
+    remove_user_marketplace_entry(dry_run)
+    return 0
+
+
 def add_project_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo-root", help="Repository root for --scope project. Defaults to git rev-parse --show-toplevel.")
     parser.add_argument("--from-vendor", help="Vendored plugin root inside the repository.")
-    parser.add_argument("--available-only", action="store_true", help="Install repo-local skills without activating the prompt gate.")
     parser.add_argument("--activate-gate", action="store_true", help="Patch project .codex/config.toml and install the project hook.")
     parser.add_argument("--link-skills", action="store_true", help="Symlink repo-local skills to the vendored plugin when possible.")
-    parser.add_argument("--copy-skills", action="store_true", help="Copy repo-local skills instead of symlinking them.")
     parser.add_argument("--with-project-agents", action="store_true", help="Copy custom agents into project .codex/agents.")
     parser.add_argument("--append-project-agents-md", action="store_true", help="Append optional project guidance to AGENTS.md.")
     parser.add_argument("--with-repo-marketplace", action="store_true", help="Add or update .agents/plugins/marketplace.json.")
-    parser.add_argument("--uninstall", action="store_true", help="Uninstall project-scope files recorded in the manifest.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -961,6 +971,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skills-only", action="store_true", help="User scope: install only direct skills. This is the default.")
     parser.add_argument("--with-hook", action="store_true", help="User scope: copy the dormant UserPromptSubmit hook script.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned changes without modifying files.")
+    parser.add_argument("--uninstall", action="store_true", help="Uninstall owned files and config entries for the selected scope.")
     add_project_arguments(parser)
     return parser
 
@@ -968,28 +979,23 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.skills_only and args.with_hook:
         parser.error("--skills-only cannot be combined with --with-hook")
-    if args.link_skills and args.copy_skills:
-        parser.error("--link-skills cannot be combined with --copy-skills")
-    if args.available_only and args.activate_gate:
-        parser.error("--available-only cannot be combined with --activate-gate")
 
     project_only_flags = [
         "--repo-root" if args.repo_root else "",
         "--from-vendor" if args.from_vendor else "",
-        "--available-only" if args.available_only else "",
         "--activate-gate" if args.activate_gate else "",
         "--link-skills" if args.link_skills else "",
-        "--copy-skills" if args.copy_skills else "",
         "--with-project-agents" if args.with_project_agents else "",
         "--append-project-agents-md" if args.append_project_agents_md else "",
         "--with-repo-marketplace" if args.with_repo_marketplace else "",
-        "--uninstall" if args.uninstall else "",
     ]
     used_project_flags = [flag for flag in project_only_flags if flag]
     if args.scope != "project" and used_project_flags:
         parser.error(f"{used_project_flags[0]} requires --scope project")
     if args.scope == "project" and (args.skills_only or args.with_hook):
         parser.error("--skills-only and --with-hook are only valid with --scope user")
+    if args.scope == "user" and args.uninstall and (args.skills_only or args.with_hook):
+        parser.error("--uninstall cannot be combined with --skills-only or --with-hook")
 
 
 def main() -> int:
@@ -1000,6 +1006,8 @@ def main() -> int:
         if args.uninstall:
             return uninstall_project(args)
         return install_project(args)
+    if args.uninstall:
+        return uninstall_user(args.dry_run)
     return install_user(args)
 
 

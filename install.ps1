@@ -6,10 +6,8 @@ param(
     [switch]$DryRun,
     [string]$RepoRoot,
     [string]$FromVendor,
-    [switch]$AvailableOnly,
     [switch]$ActivateGate,
     [switch]$LinkSkills,
-    [switch]$CopySkills,
     [switch]$WithProjectAgents,
     [switch]$AppendProjectAgentsMd,
     [switch]$WithRepoMarketplace,
@@ -23,10 +21,8 @@ if ($WithHook) { $argsList += "--with-hook" }
 if ($DryRun) { $argsList += "--dry-run" }
 if ($RepoRoot) { $argsList += @("--repo-root", $RepoRoot) }
 if ($FromVendor) { $argsList += @("--from-vendor", $FromVendor) }
-if ($AvailableOnly) { $argsList += "--available-only" }
 if ($ActivateGate) { $argsList += "--activate-gate" }
 if ($LinkSkills) { $argsList += "--link-skills" }
-if ($CopySkills) { $argsList += "--copy-skills" }
 if ($WithProjectAgents) { $argsList += "--with-project-agents" }
 if ($AppendProjectAgentsMd) { $argsList += "--append-project-agents-md" }
 if ($WithRepoMarketplace) { $argsList += "--with-repo-marketplace" }
