@@ -49,9 +49,24 @@ def run(prompt: str) -> str | None:
 def assert_context_reports_result_and_reason(prompt: str, expected_result: str) -> str:
     context = run(prompt)
     assert context is not None, prompt
-    assert f"Subagent orchestration gate result: {expected_result}." in context, (prompt, context)
+    assert context.splitlines()[0] == "Subagent orchestration gate", (prompt, context)
+    assert f"\nResult: {expected_result}\n" in context, (prompt, context)
     assert "\nReason: " in context, (prompt, context)
     return context
+
+
+def assert_context_uses_professional_status_format(context: str) -> None:
+    lines = context.splitlines()
+    assert lines[0] == "Subagent orchestration gate", context
+    assert lines[1].startswith("Result: "), context
+    assert lines[2].startswith("Reason: "), context
+    assert lines[2].endswith("."), context
+    assert ":" not in lines[2].removeprefix("Reason: "), context
+    assert "Subagent orchestration gate result:" not in context, context
+    assert "Subagent orchestration gate quiet hint" not in context, context
+    assert "Preliminary classification:" not in context, context
+    assert "Compatibility rules:" not in context, context
+    assert BOUNDARY_SENTENCE not in context, context
 
 
 def run_installer(
@@ -691,7 +706,7 @@ def test_classifier_preserves_conditional_orchestration() -> None:
     context = run("Review the branch. No subagent orchestration unless useful.")
     assert context is not None, context
     assert "check" in context.lower(), context
-    assert BOUNDARY_SENTENCE in context
+    assert BOUNDARY_SENTENCE not in context
     assert "do not ask the user whether orchestration is preferable" in context.lower()
     assert "do not ask for separate authorization before bounded delegation" in context.lower()
     assert "decide internally" in context.lower()
@@ -708,10 +723,44 @@ def test_classifier_detects_broad_investigations() -> None:
         context = run(prompt)
         assert context is not None, prompt
         assert "use-subagent-orchestrator" in context.lower(), (prompt, context)
-        assert BOUNDARY_SENTENCE in context
+        assert BOUNDARY_SENTENCE not in context
         assert "prefer single-thread or sequential-plan" in context.lower(), context
         assert "bounded independent parallel tracks" in context.lower(), context
         assert "standing authorization" in context.lower(), context
+
+
+def test_classifier_distinguishes_output_sweeps_from_formal_reviews() -> None:
+    output_sweep_prompt = (
+        "the status feedback is inconsistant mixing status sentence and nestedt punctuation : "
+        "how could we make it more professional? "
+        "(review all possible result they shall all be profesional)"
+    )
+    output_sweep_context = assert_context_reports_result_and_reason(output_sweep_prompt, "use-subagent-orchestrator")
+    assert "output/status wording" in output_sweep_context.lower(), output_sweep_context
+    assert "exhaustive result sweep" in output_sweep_context.lower(), output_sweep_context
+    assert "review/audit" not in output_sweep_context.lower(), output_sweep_context
+
+    quick_wording_context = assert_context_reports_result_and_reason(
+        "Quick review before I send it: is this status sentence professional?",
+        "single-thread-likely",
+    )
+    assert_context_uses_professional_status_format(output_sweep_context)
+    assert_context_uses_professional_status_format(quick_wording_context)
+
+
+def test_classifier_outputs_professional_status_format_for_all_results() -> None:
+    cases = [
+        ("Draft a short note for the changelog.", "single-thread-default"),
+        ("What does this repository do?", "single-thread-likely"),
+        ("Review this patch.", "orchestration-check"),
+        ("Review the branch. No subagent orchestration unless useful.", "orchestration-check"),
+        ("Debug a flaky multi-file auth regression and propose tests.", "use-subagent-orchestrator"),
+        ("Do not use subagents. Debug the flaky auth regression linearly.", "orchestration-opt-out"),
+        ("You are a subagent. Review src/auth.ts and return findings.", "recursion-guard"),
+    ]
+    for prompt, expected_result in cases:
+        context = assert_context_reports_result_and_reason(prompt, expected_result)
+        assert_context_uses_professional_status_format(context)
 
 
 def test_classifier_returns_only_result_for_default_and_simple_prompts() -> None:
@@ -722,7 +771,7 @@ def test_classifier_returns_only_result_for_default_and_simple_prompts() -> None
     ]
     for prompt, expected_result in cases:
         context = assert_context_reports_result_and_reason(prompt, expected_result)
-        assert BOUNDARY_SENTENCE in context, (prompt, context)
+        assert BOUNDARY_SENTENCE not in context, (prompt, context)
         assert "Compatibility rules:" not in context, (prompt, context)
         assert "Subagent orchestration gate quiet hint" not in context, (prompt, context)
 
@@ -839,6 +888,8 @@ def main() -> int:
     test_classifier_respects_opt_out_variants()
     test_classifier_preserves_conditional_orchestration()
     test_classifier_detects_broad_investigations()
+    test_classifier_distinguishes_output_sweeps_from_formal_reviews()
+    test_classifier_outputs_professional_status_format_for_all_results()
     test_classifier_returns_only_result_for_default_and_simple_prompts()
     test_classifier_always_reports_result_and_reason()
     test_hook_specific_output_uses_only_codex_schema_keys()

@@ -41,6 +41,21 @@ CUSTOM_AGENT_NAMES = (
 )
 CUSTOM_AGENT_PATTERN = "(?:" + "|".join(re.escape(name) for name in CUSTOM_AGENT_NAMES) + ")"
 SURFACE_TERM_PATTERN = r"(?:frontend|backend|api|web|server|client|database|db|service)s?"
+FORMAL_REVIEW_TARGET_PATTERN = (
+    r"(?:branch|pr|pull request|mr|merge request|diff|patch|code|changes?|commits?|"
+    r"security|threat|vulnerabilit(?:y|ies)|risks?|architecture|implementation|modules?|"
+    r"repositories|repo|files?|functions?|classes?|tests?)"
+)
+FORMAL_REVIEW_PATTERN = (
+    rf"(?:\breview\b.{{0,80}}\b{FORMAL_REVIEW_TARGET_PATTERN}\b|"
+    rf"\b{FORMAL_REVIEW_TARGET_PATTERN}\b.{{0,80}}\breview\b)"
+)
+OUTPUT_OR_STATUS_TERM_PATTERN = r"(?:status feedback|status sentences?|hook context|outputs?|results?|messages?|labels?)"
+OUTPUT_QUALITY_TERM_PATTERN = (
+    r"(?:professional|profesional|consistent|inconsistent|inconsistant|punctuation|"
+    r"wording|tone|polish|grammar|style)"
+)
+RESULT_SWEEP_PATTERN = r"(?:all possible|every|each|all)\s+(?:results?|outputs?|status(?:es)?|messages?|cases?|variants?)"
 
 
 def count_signals(text: str, signals: Iterable[SignalSet]) -> tuple[int, list[str]]:
@@ -53,6 +68,17 @@ def count_signals(text: str, signals: Iterable[SignalSet]) -> tuple[int, list[st
                 hits.append(group.label)
                 break
     return score, hits
+
+
+def format_signal_hits(hits: Iterable[str]) -> str:
+    return ", ".join(sorted(set(hits)))
+
+
+def format_signal_reason(message: str, hits: Iterable[str]) -> str:
+    signal_hits = format_signal_hits(hits)
+    if not signal_hits:
+        return message + "."
+    return f"{message} ({signal_hits})."
 
 
 OPTOUT_SIGNALS = (
@@ -94,7 +120,18 @@ CONDITIONAL_ORCHESTRATION_SIGNALS = (
 
 COMPLEX_SIGNALS = (
     SignalSet("debugging/root-cause", 3, (r"\bdebug\b", r"\binvestigat(?:e|ion)\b", r"root cause", r"\bfail(?:s|ed|ing|ure)?\b", r"flaky", r"regression", r"race condition", r"\bcrash(?:es|ed|ing)?\b", r"\berrors?\b")),
-    SignalSet("review/audit", 3, (r"\breview\b", r"audit", r"security", r"threat", r"vulnerability", r"risk")),
+    SignalSet("review/audit", 3, (FORMAL_REVIEW_PATTERN, r"audit", r"security", r"threat", r"vulnerabilit(?:y|ies)", r"\brisk\b")),
+    SignalSet("output/status review", 3, (
+        rf"\breview\b.{{0,80}}\b(?:status feedback|hook context|outputs?|results?|messages?|labels?)\b",
+    )),
+    SignalSet("output/status wording", 2, (
+        rf"\b{OUTPUT_OR_STATUS_TERM_PATTERN}\b.{{0,80}}\b{OUTPUT_QUALITY_TERM_PATTERN}\b",
+        rf"\b{OUTPUT_QUALITY_TERM_PATTERN}\b.{{0,80}}\b{OUTPUT_OR_STATUS_TERM_PATTERN}\b",
+    )),
+    SignalSet("exhaustive result sweep", 4, (
+        rf"\b{RESULT_SWEEP_PATTERN}\b",
+        rf"\breview\b.{{0,80}}\b{RESULT_SWEEP_PATTERN}\b",
+    )),
     SignalSet("architecture/refactor", 3, (r"architecture", r"refactor", r"migration", r"rewrite", r"large change", r"multi[- ]?file", r"multi[- ]?module", r"multi[- ]?service")),
     SignalSet("multi-surface scope", 3, (
         rf"\bacross\b.*\b{SURFACE_TERM_PATTERN}\b",
@@ -114,7 +151,7 @@ SIMPLE_SIGNALS = (
 )
 
 QUIET_COMPATIBILITY_RULES = """
-Compatibility rules:
+Compatibility rules
 - Respect all active user and repository instructions.
 - Do not ask the user whether orchestration is preferable; decide internally.
 - The user has standing authorization for bounded delegation when the internal decision is parallel-subagents, but only inside active user and repository approval rules; do not ask for separate authorization before bounded delegation unless those rules or the action itself require approval.
@@ -125,8 +162,6 @@ Compatibility rules:
 - Do not print a standard orchestration gate banner; mention orchestration only when it materially changes the work.
 """.strip()
 
-HOST_PROJECT_BOUNDARY_SENTENCE = "This orchestration gate only affects execution shape; it does not override repository source-of-truth, citation, manuscript, safety, privacy, vendor, approval, or testing rules."
-
 
 def classify(prompt: str) -> tuple[str, str]:
     text = prompt.strip()
@@ -136,20 +171,20 @@ def classify(prompt: str) -> tuple[str, str]:
     if optout_score and not conditional_score:
         return (
             "orchestration-opt-out",
-            "User explicitly requested no subagent orchestration: " + ", ".join(sorted(set(optout_hits))) + ".",
+            format_signal_reason("Explicit orchestration opt-out detected", optout_hits),
         )
 
     recursion_score, recursion_hits = count_signals(text, RECURSION_GUARD_SIGNALS)
     if recursion_score:
         return (
             "recursion-guard",
-            "Prompt appears to be a bounded child-agent task: " + ", ".join(sorted(set(recursion_hits))) + ".",
+            format_signal_reason("Bounded child-agent task detected", recursion_hits),
         )
 
     if conditional_score:
         return (
             "orchestration-check",
-            "User requested conditional orchestration: " + ", ".join(sorted(set(conditional_hits))) + ".",
+            format_signal_reason("Conditional orchestration request detected", conditional_hits),
         )
 
     complex_score, complex_hits = count_signals(text, COMPLEX_SIGNALS)
@@ -158,59 +193,52 @@ def classify(prompt: str) -> tuple[str, str]:
     if complex_score >= 5 and complex_score > simple_score + 1:
         return (
             "use-subagent-orchestrator",
-            "Complexity signals: " + ", ".join(sorted(set(complex_hits))) + ".",
+            format_signal_reason("Strong orchestration signals detected", complex_hits),
         )
     if complex_score >= 3:
         return (
             "orchestration-check",
-            "Some complexity signals are present: " + ", ".join(sorted(set(complex_hits))) + ".",
+            format_signal_reason("Moderate orchestration signals detected", complex_hits),
         )
-    if simple_score >= 2 and complex_score == 0:
+    if simple_score >= 2 and complex_score <= 2:
         return (
             "single-thread-likely",
-            "Simple-task signals: " + ", ".join(sorted(set(simple_hits))) + ".",
+            format_signal_reason("Simple-task signals detected", simple_hits),
         )
-    return ("single-thread-default", "No strong parallelization signals detected.")
-
-
-def is_skip_decision(decision: str) -> bool:
-    return decision in {"orchestration-opt-out", "recursion-guard"}
+    return ("single-thread-default", "No strong orchestration signals detected.")
 
 
 def format_result_context(decision: str, reason: str) -> str:
-    lines = [
-        f"\nSubagent orchestration gate result: {decision}.",
+    return "\n".join([
+        "Subagent orchestration gate",
+        f"Result: {decision}",
         f"Reason: {reason}",
-    ]
-    if not is_skip_decision(decision):
-        lines.append(HOST_PROJECT_BOUNDARY_SENTENCE)
-    return "\n".join(lines)
+    ])
 
 
 def build_context(decision: str, reason: str) -> str:
     result_context = format_result_context(decision, reason)
 
     if decision == "orchestration-opt-out":
-        return result_context + "\nAction: skip orchestration. Respect the user's opt-out. Do not spawn subagents or force orchestration unless the user later reverses this instruction."
+        return result_context + "\nAction: Skip orchestration and respect the user's opt-out. Do not spawn subagents or force orchestration unless the user later reverses this instruction."
 
     if decision == "recursion-guard":
-        return result_context + "\nAction: skip recursive orchestration. Treat this as a bounded subagent task. Do not spawn further subagents unless the parent explicitly requested nested delegation."
+        return result_context + "\nAction: Skip recursive orchestration. Treat this as a bounded subagent task. Do not spawn further subagents unless the parent explicitly requested nested delegation."
 
     if decision == "use-subagent-orchestrator":
         guidance = f"""
 
-Subagent orchestration gate quiet hint.
-Preliminary classification: use-subagent-orchestrator.
+Guidance: Use `subagent-orchestrator` as a fallback only when no higher-priority framework already covers this decision.
 
 {QUIET_COMPATIBILITY_RULES}
 
-If no higher-priority framework already covers this decision, the `subagent-orchestrator` skill may be used as a fallback. If skill activation is unavailable, follow this inline gate internally:
-- classify the task as single-thread, sequential-plan, or parallel-subagents;
-- spawn subagents only when the work decomposes cleanly into bounded independent tasks;
-- prefer read-only mapper/reviewer/tester/docs agents before edit-capable agents;
-- avoid recursive fan-out;
-- wait for all agents;
-- synthesize agreed facts, conflicts, files, risks, and tests before acting.
+Inline execution gate
+- Classify the task as single-thread, sequential-plan, or parallel-subagents.
+- Spawn subagents only when the work decomposes cleanly into bounded independent tasks.
+- Prefer read-only mapper/reviewer/tester/docs agents before edit-capable agents.
+- Avoid recursive fan-out.
+- Wait for all agents.
+- Synthesize agreed facts, conflicts, files, risks, and tests before acting.
 If parallelism is not actually useful after inspection, proceed single-threaded or with a sequential plan.
 """.strip()
         return result_context + "\n\n" + guidance
@@ -218,11 +246,11 @@ If parallelism is not actually useful after inspection, proceed single-threaded 
     if decision == "orchestration-check":
         guidance = f"""
 
-Subagent orchestration gate quiet hint: check.
+Guidance: Evaluate the execution shape internally before proceeding.
 
 {QUIET_COMPATIBILITY_RULES}
 
-Evaluate internally whether the task is single-thread, sequential-plan, or parallel-subagents. Use subagents only if the task decomposes cleanly and coordination overhead is worth it.
+Use subagents only if the task decomposes cleanly and coordination overhead is worth it.
 """.strip()
         return result_context + "\n\n" + guidance
 
