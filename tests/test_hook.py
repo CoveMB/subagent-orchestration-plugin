@@ -60,6 +60,7 @@ def assert_context_uses_professional_status_format(context: str) -> None:
     assert lines[0] == "Subagent orchestration gate", context
     assert lines[1].startswith("Result: "), context
     assert lines[2].startswith("Reason: "), context
+    assert len(lines) == 3, context
     assert lines[2].endswith("."), context
     assert ":" not in lines[2].removeprefix("Reason: "), context
     assert "Subagent orchestration gate result:" not in context, context
@@ -873,9 +874,8 @@ def test_parallel_subagent_decision_requires_actual_spawn_attempt() -> None:
 
     context = run("Debug a flaky multi-file auth regression and propose tests.")
     assert context is not None
-    context_text = context.lower()
-    for term in required_terms:
-        assert term in context_text, term
+    assert "use-subagent-orchestrator" in context.lower(), context
+    assert_context_uses_professional_status_format(context)
 
 
 def test_skills_define_host_project_boundary() -> None:
@@ -897,7 +897,8 @@ def test_classifier_respects_opt_out_variants() -> None:
     for prompt in cases:
         context = run(prompt)
         assert context is not None, prompt
-        assert "skip" in context.lower(), (prompt, context)
+        assert "orchestration-opt-out" in context.lower(), (prompt, context)
+        assert_context_uses_professional_status_format(context)
 
 
 def test_classifier_preserves_conditional_orchestration() -> None:
@@ -905,8 +906,7 @@ def test_classifier_preserves_conditional_orchestration() -> None:
     assert context is not None, context
     assert "check" in context.lower(), context
     assert BOUNDARY_SENTENCE not in context
-    assert "evaluate the execution shape internally" in context.lower()
-    assert "use subagents only if the task decomposes cleanly" in context.lower()
+    assert_context_uses_professional_status_format(context)
 
 
 def test_classifier_detects_broad_investigations() -> None:
@@ -919,9 +919,7 @@ def test_classifier_detects_broad_investigations() -> None:
         assert context is not None, prompt
         assert "use-subagent-orchestrator" in context.lower(), (prompt, context)
         assert BOUNDARY_SENTENCE not in context
-        assert "inline execution gate" in context.lower(), context
-        assert "spawn subagents only when the work decomposes cleanly" in context.lower(), context
-        assert "proceed single-threaded or with a sequential plan" in context.lower(), context
+        assert_context_uses_professional_status_format(context)
 
 
 def test_classifier_distinguishes_output_sweeps_from_formal_reviews() -> None:
@@ -1002,7 +1000,8 @@ def test_classifier_guards_custom_agent_prompts() -> None:
     for prompt in cases:
         context = run(prompt)
         assert context is not None, prompt
-        assert "skip recursive" in context.lower(), (prompt, context)
+        assert "recursion-guard" in context.lower(), (prompt, context)
+        assert_context_uses_professional_status_format(context)
 
 
 def test_toml_snippets_parse() -> None:
@@ -1089,8 +1088,8 @@ def main() -> int:
     cases = [
         ("Debug a flaky multi-file auth regression and propose tests.", "use-subagent-orchestrator"),
         ("Rename this variable in one file.", "single-thread-likely"),
-        ("Do not use subagents. Debug the flaky auth regression linearly.", "skip"),
-        ("You are a subagent. Review src/auth.ts and return findings.", "skip recursive"),
+        ("Do not use subagents. Debug the flaky auth regression linearly.", "orchestration-opt-out"),
+        ("You are a subagent. Review src/auth.ts and return findings.", "recursion-guard"),
     ]
     for prompt, expected in cases:
         context = run(prompt)

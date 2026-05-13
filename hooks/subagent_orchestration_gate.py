@@ -5,11 +5,8 @@ UserPromptSubmit hook for Codex.
 Quiet compatibility behavior:
 - Every submitted prompt is classified before output is chosen.
 - Every successful classification returns a result and reason in additionalContext.
-- Simple/default prompts emit only classification metadata, without orchestration guidance.
+- All prompts emit only classification metadata, without orchestration guidance.
 - The hook does not spawn subagents by itself.
-- For complex prompts, it injects a quiet hint that complements existing
-  orchestration, routing, bootstrap, skill-selection, and agent-management
-  frameworks instead of competing with them.
 
 Codex hook docs: UserPromptSubmit receives JSON on stdin with a `prompt` field and
 can return JSON with hookSpecificOutput.additionalContext.
@@ -208,45 +205,6 @@ def format_result_context(decision: str, reason: str) -> str:
     ])
 
 
-def build_context(decision: str, reason: str) -> str:
-    result_context = format_result_context(decision, reason)
-
-    if decision == "orchestration-opt-out":
-        return result_context + "\nAction: Skip orchestration and respect the user's opt-out. Do not spawn subagents or force orchestration unless the user later reverses this instruction."
-
-    if decision == "recursion-guard":
-        return result_context + "\nAction: Skip recursive orchestration. Treat this as a bounded subagent task. Do not spawn further subagents unless the parent explicitly requested nested delegation."
-
-    if decision == "use-subagent-orchestrator":
-        guidance = """
-
-Guidance: Use `subagent-orchestrator` as a fallback only when no higher-priority framework already covers this decision.
-
-Inline execution gate
-- Classify the task as single-thread, sequential-plan, or parallel-subagents.
-- Spawn subagents only when the work decomposes cleanly into bounded independent tasks.
-- When the execution shape is parallel-subagents, call spawn_agent or the available subagent-spawning tool after defining bounded roles; do not stop at a plan or recommendation.
-- If no subagent-spawning tool is available, or higher-priority instructions block spawning, state that blocker and proceed with the closest sequential fallback.
-- Prefer read-only mapper/reviewer/tester/docs agents before edit-capable agents.
-- Avoid recursive fan-out.
-- Wait for all agents.
-- Synthesize agreed facts, conflicts, files, risks, and tests before acting.
-If parallelism is not actually useful after inspection, proceed single-threaded or with a sequential plan.
-""".strip()
-        return result_context + "\n\n" + guidance
-
-    if decision == "orchestration-check":
-        guidance = """
-
-Guidance: Evaluate the execution shape internally before proceeding.
-
-Use subagents only if the task decomposes cleanly and coordination overhead is worth it.
-""".strip()
-        return result_context + "\n\n" + guidance
-
-    return result_context
-
-
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -256,7 +214,7 @@ def main() -> int:
 
     prompt = str(payload.get("prompt", ""))
     decision, reason = classify(prompt)
-    additional_context = build_context(decision, reason)
+    additional_context = format_result_context(decision, reason)
     hook_output = {
         "hookEventName": "UserPromptSubmit",
         "additionalContext": additional_context,

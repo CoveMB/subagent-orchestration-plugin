@@ -5,7 +5,7 @@ This starter kit gives Codex a quiet, compatibility-oriented orchestration gate:
 - every prompt is classified internally and receives compact result/reason metadata,
 - existing orchestration, routing, bootstrap, skill-selection, and agent-management frameworks take priority,
 - simple prompts stay single-threaded unless the user asks otherwise,
-- complex prompts can receive a quiet hint to use `subagent-orchestrator` only as a complement or fallback,
+- complex prompts still receive only result/reason metadata,
 - bounded delegation has standing authorization when the internal decision is `parallel-subagents`,
 - parallel subagents are used only when they add real value.
 
@@ -35,9 +35,9 @@ For Codex, the quiet behavior comes from three layers together:
 
 1. **Compatibility skill**: `using-subagent-orchestrator` exists for explicit or legacy checks.
 2. **Orchestration skill**: `subagent-orchestrator` chooses `single-thread`, `sequential-plan`, or `parallel-subagents`.
-3. **UserPromptSubmit hook**: always reports a result and reason through valid `additionalContext`; simple/default prompts include only that metadata, while complex prompts also receive quiet compatibility guidance.
+3. **UserPromptSubmit hook**: always reports only a result and reason through valid `additionalContext`.
 
-The hook does not spawn agents by itself. It injects the execution contract. After the orchestration skill selects `parallel-subagents`, the assistant must call `spawn_agent` or the available subagent-spawning tool in that same turn after defining bounded roles. It should only fall back to sequential work when no spawning tool is available or higher-priority rules block spawning.
+The hook does not spawn agents by itself or inject execution instructions. After the orchestration skill selects `parallel-subagents`, the assistant must call `spawn_agent` or the available subagent-spawning tool in that same turn after defining bounded roles. It should only fall back to sequential work when no spawning tool is available or higher-priority rules block spawning.
 
 A plugin can package the skills. The installer supports user/global skill installation and project-scoped activation, but activation is always explicit.
 
@@ -45,7 +45,7 @@ A plugin can package the skills. The installer supports user/global skill instal
 
 - **Plugin-level boundary**: this plugin is an execution-shape helper only. It can help choose `single-thread`, `sequential-plan`, or `parallel-subagents`; it does not decide truth, evidence, citations, approvals, vendor trust, or test sufficiency.
 - **Host-repo boundary**: domain-specific user instructions, repository `AGENTS.md`, local scripts, audit requirements, and source-of-truth rules win over plugin guidance. When host repository rules are stricter, host repository rules win.
-- **Hook boundary**: the hook only injects guidance. It does not enforce truth, validate sources, authorize edits, satisfy citations, replace tests, or bypass safety/privacy/vendor/approval rules.
+- **Hook boundary**: the hook only reports classification metadata. It does not enforce truth, validate sources, authorize edits, satisfy citations, replace tests, or bypass safety/privacy/vendor/approval rules.
 - **Installer boundary**: user scope never writes `CODEX_HOME/config.toml` or `CODEX_HOME/AGENTS.md`. Project scope writes only under the selected repository root and never patches `~/.codex` or `~/.agents`.
 
 ## Four install modes
@@ -263,15 +263,15 @@ Expected:
 
 - debugging prompt => `use-subagent-orchestrator`,
 - rename prompt => `single-thread-likely` with only result/reason metadata,
-- user opt-out => `skip`,
-- child-agent prompt => `skip recursive`.
+- user opt-out => `orchestration-opt-out`,
+- child-agent prompt => `recursion-guard`.
 
 ## Safety notes
 
 - Keep `max_depth = 1` if you manually merge `snippets/config.subagents.toml`.
 - Prefer read-only subagents first.
 - Do not let multiple agents edit the same files unless they are in isolated worktrees.
-- Treat the hook as a quiet hint, not an enforcement boundary.
+- Treat the hook as classification metadata, not an enforcement boundary.
 - Respect user opt-outs.
 - Repository-specific `AGENTS.md` files and source-of-truth project rules remain higher authority than this global guidance.
 - Do not make this kit compete with Superpowers, Recursive Mode, or other orchestration/routing/bootstrap systems.
