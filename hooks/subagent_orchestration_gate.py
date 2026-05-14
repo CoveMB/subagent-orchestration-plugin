@@ -84,10 +84,13 @@ OPTOUT_SIGNALS = (
         r"\bdon['’]?t use sub[- ]?agents?\b",
         r"\bdont use sub[- ]?agents?\b",
         r"\bno sub[- ]?agents?\b",
+        r"\bnever use sub[- ]?agents?\b",
         r"\bwithout sub[- ]?agents?\b",
         r"\bno parallel agents?\b",
         r"\bwithout parallel agents?\b",
         r"\bno orchestrat(?:ion|e)\b",
+        r"\bnever orchestrat(?:e|ion)\b",
+        r"\bnever use orchestrat(?:ion|e)\b",
         r"\bdon['’]?t orchestrat(?:e|ion)\b",
         r"\bdont orchestrat(?:e|ion)\b",
         r"\bdo not orchestrat(?:e|ion)\b",
@@ -205,11 +208,27 @@ def format_result_context(decision: str, reason: str) -> str:
     ])
 
 
-def main() -> int:
+def print_parse_error(message: str) -> None:
+    print(json.dumps({"systemMessage": f"subagent orchestration hook could not parse input: {message}"}))
+
+
+def read_payload() -> dict[str, object] | None:
     try:
         payload = json.load(sys.stdin)
     except Exception as exc:  # Fail open: hooks should not break normal Codex usage.
-        print(json.dumps({"systemMessage": f"subagent orchestration hook could not parse input: {exc}"}))
+        print_parse_error(str(exc))
+        return None
+
+    if not isinstance(payload, dict):
+        print_parse_error(f"expected object payload, got {type(payload).__name__}")
+        return None
+
+    return payload
+
+
+def main() -> int:
+    payload = read_payload()
+    if payload is None:
         return 0
 
     prompt = str(payload.get("prompt", ""))

@@ -21,21 +21,15 @@ def find_repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def print_skip(reason: str) -> int:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "result": "skip",
-            "reason": reason,
-        }
-    }))
+def print_system_message(message: str) -> int:
+    print(json.dumps({"systemMessage": message}))
     return 0
 
 
 def main() -> int:
     hook_path = find_repo_root() / RELATIVE_VENDOR_HOOK
     if not hook_path.exists():
-        return print_skip(f"vendored subagent orchestration hook is missing: {hook_path}")
+        return print_system_message(f"vendored subagent orchestration hook is missing: {hook_path}")
     proc = subprocess.run(
         ["python3", str(hook_path)],
         input=sys.stdin.read(),
@@ -44,7 +38,7 @@ def main() -> int:
         check=False,
     )
     if proc.returncode != 0 or not proc.stdout.strip():
-        return print_skip("vendored subagent orchestration hook failed open")
+        return print_system_message("vendored subagent orchestration hook failed open")
     print(proc.stdout, end="")
     return 0
 

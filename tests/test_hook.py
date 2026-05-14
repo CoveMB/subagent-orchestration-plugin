@@ -14,24 +14,48 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "hooks" / "subagent_orchestration_gate.py"
 INSTALLER = ROOT / "scripts" / "install_user.py"
 UNINSTALLER = ROOT / "scripts" / "uninstall_user.py"
-ORCHESTRATOR_SKILL = ROOT / "plugin" / "subagent-orchestrator" / "skills" / "subagent-orchestrator" / "SKILL.md"
-USING_ORCHESTRATOR_SKILL = ROOT / "plugin" / "subagent-orchestrator" / "skills" / "using-subagent-orchestrator" / "SKILL.md"
 BOUNDARY_SENTENCE = (
     "This orchestration gate only affects execution shape; it does not override repository source-of-truth, "
     "citation, manuscript, safety, privacy, vendor, approval, or testing rules."
 )
 USER_PROMPT_SUBMIT_OUTPUT_KEYS = {"hookEventName", "additionalContext"}
+DECISION_MATRIX_CASES = [
+    ("Draft a short note for the changelog.", "single-thread-default"),
+    ("How could we create tests that the skill hook makes an appropriate decision?", "single-thread-likely"),
+    ("Rename this variable in one file.", "single-thread-likely"),
+    ("Review this patch.", "orchestration-check"),
+    ("Compare implementation approaches across API and web.", "use-subagent-orchestrator"),
+    ("Investigate the CI failure spanning API and web tests.", "use-subagent-orchestrator"),
+    ("Review the branch. No subagent orchestration unless useful.", "orchestration-check"),
+    ("Never use subagents. Review this patch.", "orchestration-opt-out"),
+    ("You are a subagent. Review src/auth.ts and return findings.", "recursion-guard"),
+]
+PRECEDENCE_CASES = [
+    ("Never use subagents. Review this patch for security risk.", "orchestration-opt-out"),
+    ("Review the branch. No subagent orchestration unless useful.", "orchestration-check"),
+    ("You are a subagent. Audit src/auth.ts and return findings.", "recursion-guard"),
+    ("How should we test this hook?", "single-thread-likely"),
+]
+THRESHOLD_EDGE_CASES = [
+    ("Audit this patch.", "orchestration-check"),
+    ("Write a quick review of tests and explain it.", "orchestration-check"),
+    ("How should we verify this?", "single-thread-likely"),
+]
 
 
-def run_payload(prompt: str) -> dict[str, object]:
+def run_hook_with_input(input_text: str) -> dict[str, object]:
     proc = subprocess.run(
         [sys.executable, str(HOOK)],
-        input=json.dumps({"prompt": prompt}),
+        input=input_text,
         text=True,
         capture_output=True,
         check=True,
     )
     return json.loads(proc.stdout)
+
+
+def run_payload(prompt: object) -> dict[str, object]:
+    return run_hook_with_input(json.dumps({"prompt": prompt}))
 
 
 def hook_specific_output(prompt: str) -> dict[str, object]:
@@ -68,6 +92,26 @@ def assert_context_uses_professional_status_format(context: str) -> None:
     assert "Preliminary classification:" not in context, context
     assert "Compatibility rules" not in context, context
     assert BOUNDARY_SENTENCE not in context, context
+
+
+def assert_prompt_decisions(cases: list[tuple[str, str]]) -> None:
+    for prompt, expected_result in cases:
+        context = assert_context_reports_result_and_reason(prompt, expected_result)
+        assert_context_uses_professional_status_format(context)
+
+
+def assert_context_includes_labels(prompt: str, expected_result: str, labels: list[str]) -> None:
+    context = assert_context_reports_result_and_reason(prompt, expected_result)
+    lower_context = context.lower()
+    for label in labels:
+        assert label in lower_context, (prompt, label, context)
+    assert_context_uses_professional_status_format(context)
+
+
+def assert_fail_open_output(output: dict[str, object]) -> None:
+    assert "systemMessage" in output, output
+    assert "hookSpecificOutput" not in output, output
+    assert "could not parse input" in str(output["systemMessage"]), output
 
 
 def run_installer(
@@ -593,10 +637,10 @@ def test_project_vendored_hook_wrapper_fails_open_when_vendor_hook_is_missing() 
             cwd=repo,
             check=True,
         )
-        hook_output = json.loads(hook_proc.stdout)["hookSpecificOutput"]
-        assert hook_output["result"] == "skip"
-        assert "missing" in hook_output["reason"]
-        assert "additionalContext" not in hook_output
+        hook_output = json.loads(hook_proc.stdout)
+        assert "systemMessage" in hook_output, hook_output
+        assert "vendored subagent orchestration hook is missing" in hook_output["systemMessage"]
+        assert "hookSpecificOutput" not in hook_output
 
 
 def test_project_uninstall_removes_manifest_owned_files_only() -> None:
@@ -838,61 +882,21 @@ def test_project_marketplace_requires_valid_json_and_plugin_list() -> None:
         assert_installer_failed(bad_schema_proc, "marketplace plugins must be a list")
 
 
-def test_orchestrator_skill_has_execution_runbook() -> None:
-    text = ORCHESTRATOR_SKILL.read_text(encoding="utf-8")
-    required_sections = [
-        "## Execution Runbook",
-        "### Spawn Template",
-        "### Agent Task Templates",
-        "### Fallback When Custom Agents Are Unavailable",
-    ]
-    missing_sections = [section for section in required_sections if section not in text]
-    assert not missing_sections, missing_sections
-
-
-def test_skills_treat_bounded_delegation_as_authorized() -> None:
-    for path in [ORCHESTRATOR_SKILL, USING_ORCHESTRATOR_SKILL]:
-        text = path.read_text(encoding="utf-8").lower()
-        assert "standing authorization" in text, path
-        assert "do not ask for separate authorization" in text, path
-        assert "clear boundaries" in text, path
-    orchestrator_text = ORCHESTRATOR_SKILL.read_text(encoding="utf-8").lower()
-    assert "ask before code changes unless" not in orchestrator_text
-    assert "ask before code changes only if" in orchestrator_text
-
-
-def test_parallel_subagent_decision_requires_actual_spawn_attempt() -> None:
-    required_terms = [
-        "spawn_agent",
-        "available subagent-spawning tool",
-        "do not stop at a plan",
-    ]
-    for path in [ORCHESTRATOR_SKILL, USING_ORCHESTRATOR_SKILL]:
-        text = path.read_text(encoding="utf-8").lower()
-        for term in required_terms:
-            assert term in text, (path, term)
-
-    context = run("Debug a flaky multi-file auth regression and propose tests.")
-    assert context is not None
-    assert "use-subagent-orchestrator" in context.lower(), context
-    assert_context_uses_professional_status_format(context)
-
-
-def test_skills_define_host_project_boundary() -> None:
-    for path in [ORCHESTRATOR_SKILL, USING_ORCHESTRATOR_SKILL]:
-        text = path.read_text(encoding="utf-8").lower()
-        assert "execution-shape helper" in text, path
-        assert "host repository rules win" in text, path
-
-
 def test_classifier_respects_opt_out_variants() -> None:
     cases = [
         "Don't orchestrate. Debug the flaky auth regression.",
         "Don't use orchestration. Audit security risk.",
         "Dont use subagents. Review this patch.",
         "Do not use orchestration. Audit security risk.",
+        "Never use subagents. Review this patch.",
+        "Never use orchestration. Audit security risk.",
+        "Never orchestrate. Debug this failure.",
         "Without orchestration, review this patch.",
+        "Without parallel agents, investigate this failure.",
         "No parallel agents, debug this failure.",
+        "Work linearly through this flaky failure.",
+        "Use linear execution for this audit.",
+        "Single-thread only for this review.",
     ]
     for prompt in cases:
         context = run(prompt)
@@ -902,11 +906,12 @@ def test_classifier_respects_opt_out_variants() -> None:
 
 
 def test_classifier_preserves_conditional_orchestration() -> None:
-    context = run("Review the branch. No subagent orchestration unless useful.")
-    assert context is not None, context
-    assert "check" in context.lower(), context
-    assert BOUNDARY_SENTENCE not in context
-    assert_context_uses_professional_status_format(context)
+    assert_prompt_decisions([
+        ("Review the branch. No subagent orchestration unless useful.", "orchestration-check"),
+        ("Use subagents only if helpful for the implementation review.", "orchestration-check"),
+        ("Run parallel agents only if valuable for the audit.", "orchestration-check"),
+        ("Orchestration only if needed for this refactor.", "orchestration-check"),
+    ])
 
 
 def test_classifier_detects_broad_investigations() -> None:
@@ -941,19 +946,50 @@ def test_classifier_distinguishes_output_sweeps_from_formal_reviews() -> None:
     assert_context_uses_professional_status_format(quick_wording_context)
 
 
+def test_classifier_reports_reason_labels_for_representative_complex_prompt() -> None:
+    assert_context_includes_labels(
+        "Debug flaky regression across API and web tests.",
+        "use-subagent-orchestrator",
+        ["debugging/root-cause", "multi-surface scope", "tests/verification"],
+    )
+
+
+def test_classifier_decision_matrix_covers_execution_shapes() -> None:
+    assert_prompt_decisions(DECISION_MATRIX_CASES)
+
+
+def test_classifier_precedence_keeps_specific_decisions_stable() -> None:
+    assert_prompt_decisions(PRECEDENCE_CASES)
+
+
+def test_classifier_threshold_edges_stay_stable() -> None:
+    assert_prompt_decisions(THRESHOLD_EDGE_CASES)
+
+
+def test_classifier_recursion_guard_variants() -> None:
+    assert_prompt_decisions([
+        ("Dispatched as a subagent: review src/auth.ts.", "recursion-guard"),
+        ("You are so_mapper. Map the repository and return files.", "recursion-guard"),
+        ("Task for so_tester: find relevant tests.", "recursion-guard"),
+        ("Parent agent asked you to audit this patch.", "recursion-guard"),
+    ])
+
+
+def test_hook_handles_invalid_or_missing_prompt_payloads() -> None:
+    assert_fail_open_output(run_hook_with_input("{not valid json"))
+
+    for input_text in ["[]", "null", '"prompt"']:
+        assert_fail_open_output(run_hook_with_input(input_text))
+
+    empty_context = run_hook_with_input("{}")["hookSpecificOutput"]["additionalContext"]
+    assert empty_context == "Subagent orchestration gate\nResult: single-thread-default\nReason: No strong orchestration signals detected."
+
+    numeric_context = run_payload(404)["hookSpecificOutput"]["additionalContext"]
+    assert "\nResult: single-thread-default\n" in numeric_context, numeric_context
+
+
 def test_classifier_outputs_professional_status_format_for_all_results() -> None:
-    cases = [
-        ("Draft a short note for the changelog.", "single-thread-default"),
-        ("What does this repository do?", "single-thread-likely"),
-        ("Review this patch.", "orchestration-check"),
-        ("Review the branch. No subagent orchestration unless useful.", "orchestration-check"),
-        ("Debug a flaky multi-file auth regression and propose tests.", "use-subagent-orchestrator"),
-        ("Do not use subagents. Debug the flaky auth regression linearly.", "orchestration-opt-out"),
-        ("You are a subagent. Review src/auth.ts and return findings.", "recursion-guard"),
-    ]
-    for prompt, expected_result in cases:
-        context = assert_context_reports_result_and_reason(prompt, expected_result)
-        assert_context_uses_professional_status_format(context)
+    assert_prompt_decisions(DECISION_MATRIX_CASES)
 
 
 def test_classifier_returns_only_result_for_default_and_simple_prompts() -> None:
@@ -1073,7 +1109,20 @@ def test_check_script_exists_and_runs_expected_commands() -> None:
     assert check_script.exists()
     text = check_script.read_text(encoding="utf-8")
     assert "python3 tests/test_hook.py" in text
+    assert "python3 tests/test_skills.py" in text
+    assert "python3 tests/test_evals.py" in text
     assert "python3 -m compileall -q hooks scripts tests" in text
+
+
+def test_github_actions_runs_check_script() -> None:
+    workflow = ROOT / ".github" / "workflows" / "tests.yml"
+    assert workflow.exists()
+    text = workflow.read_text(encoding="utf-8")
+    assert "on:" in text
+    assert "pull_request:" in text
+    assert "push:" in text
+    assert "bash scripts/check.sh" in text
+    assert "python-version: '3.11'" in text
 
 
 def run_all_tests() -> None:

@@ -16,7 +16,7 @@ The goal is not to spawn agents by default. The goal is to choose the smallest e
 - This skill is an execution-shape helper only.
 - It may organize work, separate investigation tracks, reduce context noise, and improve review coverage.
 - It must not decide research truth, source validity, citation validity, manuscript truth, test sufficiency, safety approval, or vendor trust.
-- It must not override repository AGENTS.md or other host project instructions.
+- It must not override repository AGENTS.md, source-of-truth rules, or other host project instructions.
 - When host repository rules are stricter than plugin guidance, host repository rules win.
 - If a host project requires evidence, citations, tests, approvals, locators, or audit notes, subagent output is not a substitute for those requirements.
 - Subagent output is a work product, not evidence by itself.

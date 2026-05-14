@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "overall_pass": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["passed", "failed", "missing"],
+      "additionalProperties": false
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "missing": {
+            "type": "boolean"
+          },
+          "decision": {
+            "type": ["string", "null"]
+          },
+          "spawn_attempted": {
+            "type": "boolean"
+          },
+          "checks": {
+            "type": "object"
+          }
+        },
+        "required": ["id", "passed", "missing", "checks"],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["overall_pass", "summary", "cases"],
+  "additionalProperties": false
+}

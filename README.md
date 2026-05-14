@@ -45,6 +45,7 @@ A plugin can package the skills. The installer supports user/global skill instal
 
 - **Plugin-level boundary**: this plugin is an execution-shape helper only. It can help choose `single-thread`, `sequential-plan`, or `parallel-subagents`; it does not decide truth, evidence, citations, approvals, vendor trust, or test sufficiency.
 - **Host-repo boundary**: domain-specific user instructions, repository `AGENTS.md`, local scripts, audit requirements, and source-of-truth rules win over plugin guidance. When host repository rules are stricter, host repository rules win.
+- **Subagent-output boundary**: subagent output is work product, not evidence by itself. Required tests, citations, source checks, approvals, and audit notes still need to be performed directly.
 - **Hook boundary**: the hook only reports classification metadata. It does not enforce truth, validate sources, authorize edits, satisfy citations, replace tests, or bypass safety/privacy/vendor/approval rules.
 - **Installer boundary**: user scope never writes `CODEX_HOME/config.toml` or `CODEX_HOME/AGENTS.md`. Project scope writes only under the selected repository root and never patches `~/.codex` or `~/.agents`.
 
@@ -265,6 +266,20 @@ Expected:
 - rename prompt => `single-thread-likely` with only result/reason metadata,
 - user opt-out => `orchestration-opt-out`,
 - child-agent prompt => `recursion-guard`.
+
+## Skill evals
+
+The fast check suite validates the eval assets and the offline trace grader, but it does not run live agent sessions.
+
+The prompt corpus lives at `evals/skill_prompts.jsonl`. Each row defines the expected hook decision, whether a spawn attempt is required or forbidden, host-rule fixtures, command limits, and rubric ids. The set intentionally includes positive, negative, opt-out, child-agent, host-rule, and broad parallel-work cases.
+
+To grade captured JSONL traces, place one trace per prompt id in a directory as `<id>.jsonl`, then run:
+
+```bash
+python3 scripts/grade_skill_traces.py --prompts evals/skill_prompts.jsonl --traces path/to/traces
+```
+
+The grader checks observed `Result:` metadata, spawn attempts, forbidden externally visible commands, and command-count budgets. It prints structured JSON compatible with `evals/trace_eval.schema.json`.
 
 ## Safety notes
 

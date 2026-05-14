@@ -2,7 +2,7 @@
 
 This gate is optional compatibility guidance, not a global bootstrap workflow.
 Existing orchestration, routing, bootstrap, skill-selection, and agent-management frameworks take priority.
-Host project rules win. This plugin is an execution-shape helper only; it does not override local source-of-truth, citation, manuscript, safety, privacy, vendor, approval, testing, script, or audit requirements.
+Host repository rules win. This plugin is an execution-shape helper only; it does not override local source-of-truth, citation, manuscript, safety, privacy, vendor, approval, testing, script, or audit requirements.
 
 For simple/default prompts, stay silent and proceed single-threaded.
 
