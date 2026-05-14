@@ -271,7 +271,7 @@ Expected:
 
 The fast check suite validates the eval assets and the offline trace grader, but it does not run live agent sessions.
 
-The prompt corpus lives at `evals/skill_prompts.jsonl`. Each row defines the expected hook decision, whether a spawn attempt is required or forbidden, host-rule fixtures, command limits, and rubric ids. The set intentionally includes positive, negative, opt-out, child-agent, host-rule, and broad parallel-work cases.
+The prompt corpus lives at `evals/skill_prompts.jsonl`. Each row defines the expected hook decision, whether a spawn attempt is required or forbidden, expected spawned agent roles for parallel cases, wait/synthesis requirements, host-rule fixtures, command/spawn limits, and rubric ids. The grader validates these rows before scoring and exits with code `2` when the corpus is malformed. The set intentionally includes positive, negative, opt-out, child-agent, host-rule, documentation/setup validation, and broad parallel-work cases.
 
 To grade captured JSONL traces, place one trace per prompt id in a directory as `<id>.jsonl`, then run:
 
@@ -279,7 +279,26 @@ To grade captured JSONL traces, place one trace per prompt id in a directory as 
 python3 scripts/grade_skill_traces.py --prompts evals/skill_prompts.jsonl --traces path/to/traces
 ```
 
-The grader checks observed `Result:` metadata, spawn attempts, forbidden externally visible commands, and command-count budgets. It prints structured JSON compatible with `evals/trace_eval.schema.json`.
+The grader checks observed `Result:` metadata, spawn attempts, expected spawned agent roles, required waits after spawning, synthesis text, forbidden externally visible commands/tools, and command/spawn-count budgets. It prints structured JSON compatible with `evals/trace_eval.schema.json`.
+
+Representative trace fixtures live under `evals/trace_fixtures/pass` and `evals/trace_fixtures/fail` so the grader itself is tested against realistic saved JSONL events.
+
+To run live Codex traces locally, use the live harness. It is intentionally outside CI and executes the selected prompts through `codex exec --json`, one trace per case:
+
+```bash
+python3 scripts/run_live_skill_evals.py \
+  --traces evals/live_traces/manual \
+  --case simple-repository-question \
+  --case parallel-auth-debug
+```
+
+Preview commands without running Codex:
+
+```bash
+python3 scripts/run_live_skill_evals.py --traces evals/live_traces/manual --dry-run
+```
+
+The harness writes `selected_prompts.jsonl`, `<case-id>.jsonl`, optional `<case-id>.stderr.txt`, and `grade.json` into the trace directory. Reusing a trace directory requires `--overwrite`.
 
 ## Safety notes
 

@@ -53,6 +53,14 @@ OUTPUT_QUALITY_TERM_PATTERN = (
     r"wording|tone|polish|grammar|style)"
 )
 RESULT_SWEEP_PATTERN = r"(?:all possible|every|each|all)\s+(?:results?|outputs?|status(?:es)?|messages?|cases?|variants?)"
+DOCUMENTATION_TERM_PATTERN = r"\b(?:docs?|d[eo]cument(?:s|ation|ations)?)\b"
+QA_TERM_PATTERN = r"\b(?:qa|quality assurance)\b"
+SETUP_TERM_PATTERN = r"\b(?:setup|install(?:ation|er)?|config(?:uration)?)\b"
+PLUGIN_MIGRATION_TERM_PATTERN = r"\b(?:(?:previous|old|legacy)\s+plugin|remaining\s+(?:mentions?|references?))\b"
+VALIDATION_TARGET_PATTERN = (
+    rf"(?:{DOCUMENTATION_TERM_PATTERN}|{QA_TERM_PATTERN}|{SETUP_TERM_PATTERN}|{PLUGIN_MIGRATION_TERM_PATTERN})"
+)
+VALIDATION_VERB_PATTERN = r"\b(?:validat(?:e|ion)|ensure|verify|check|confirm|make sure)\b"
 
 
 def count_signals(text: str, signals: Iterable[SignalSet]) -> tuple[int, list[str]]:
@@ -137,14 +145,28 @@ COMPLEX_SIGNALS = (
         rf"\b{RESULT_SWEEP_PATTERN}\b",
         rf"\breview\b.{{0,80}}\b{RESULT_SWEEP_PATTERN}\b",
     )),
+    SignalSet("validation sweep", 3, (
+        rf"{VALIDATION_VERB_PATTERN}.{{0,120}}{VALIDATION_TARGET_PATTERN}",
+        rf"{VALIDATION_TARGET_PATTERN}.{{0,120}}{VALIDATION_VERB_PATTERN}",
+        r"\bno remaining\b.{0,80}\b(?:mentions?|references?|plugin)\b",
+    )),
     SignalSet("architecture/refactor", 3, (r"architecture", r"refactor", r"migration", r"rewrite", r"large change", r"multi[- ]?file", r"multi[- ]?module", r"multi[- ]?service")),
     SignalSet("multi-surface scope", 3, (
         rf"\bacross\b.*\b{SURFACE_TERM_PATTERN}\b",
         rf"\b{SURFACE_TERM_PATTERN}\b.*\band\b.*\b{SURFACE_TERM_PATTERN}\b",
         rf"\bspanning\b.*\b{SURFACE_TERM_PATTERN}\b",
     )),
-    SignalSet("tests/verification", 2, (r"\btests?\b", r"coverage", r"verify", r"reproduce", r"benchmark", r"performance", r"\bci\b")),
-    SignalSet("research/docs", 2, (r"docs?", r"documentation", r"api", r"version", r"latest", r"framework", r"library")),
+    SignalSet("tests/verification", 2, (r"\btests?\b", r"coverage", r"verify", r"\bvalidat(?:e|ion)\b", r"reproduce", r"benchmark", r"performance", r"\bci\b")),
+    SignalSet("research/docs", 2, (DOCUMENTATION_TERM_PATTERN, r"api", r"version", r"latest", r"framework", r"library")),
+    SignalSet("documentation/qa", 2, (
+        rf"{DOCUMENTATION_TERM_PATTERN}.{{0,120}}{QA_TERM_PATTERN}",
+        rf"{QA_TERM_PATTERN}.{{0,120}}{DOCUMENTATION_TERM_PATTERN}",
+    )),
+    SignalSet("setup/config", 2, (SETUP_TERM_PATTERN,)),
+    SignalSet("plugin migration cleanup", 2, (
+        PLUGIN_MIGRATION_TERM_PATTERN,
+        r"\bremaining\s+(?:mentions?|references?)\b.{0,80}\bplugin\b",
+    )),
     SignalSet("comparison/options", 2, (r"compare", r"options", r"trade[- ]?offs?", r"alternatives?", r"approaches?")),
     SignalSet("explicit subagents", 5, (r"sub[- ]?agents?", r"parallel agents?", r"orchestrat", r"delegate", r"split .*agents?")),
 )

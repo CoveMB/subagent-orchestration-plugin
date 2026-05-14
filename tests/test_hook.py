@@ -927,6 +927,20 @@ def test_classifier_detects_broad_investigations() -> None:
         assert_context_uses_professional_status_format(context)
 
 
+def test_classifier_detects_broad_validation_sweeps() -> None:
+    prompt = (
+        "validate no remaining mention of previous plugin and make sure all decumentations "
+        "have been properly updated and ensure the qa document has been properly updated "
+        "and validate the setup as been properly updated"
+    )
+    context = assert_context_reports_result_and_reason(prompt, "use-subagent-orchestrator")
+    assert "validation sweep" in context.lower(), context
+    assert "documentation/qa" in context.lower(), context
+    assert "setup/config" in context.lower(), context
+    assert "plugin migration cleanup" in context.lower(), context
+    assert_context_uses_professional_status_format(context)
+
+
 def test_classifier_distinguishes_output_sweeps_from_formal_reviews() -> None:
     output_sweep_prompt = (
         "the status feedback is inconsistant mixing status sentence and nestedt punctuation : "
@@ -1091,6 +1105,7 @@ def test_gitignore_excludes_generated_files() -> None:
     patterns = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ".DS_Store" in patterns
     assert "__pycache__/" in patterns
+    assert "evals/live_traces/" in patterns
 
 
 def test_no_tracked_ds_store_files() -> None:
@@ -1111,6 +1126,7 @@ def test_check_script_exists_and_runs_expected_commands() -> None:
     assert "python3 tests/test_hook.py" in text
     assert "python3 tests/test_skills.py" in text
     assert "python3 tests/test_evals.py" in text
+    assert "python3 tests/test_live_evals.py" in text
     assert "python3 -m compileall -q hooks scripts tests" in text
 
 
@@ -1133,22 +1149,6 @@ def run_all_tests() -> None:
 
 def main() -> int:
     run_all_tests()
-
-    cases = [
-        ("Debug a flaky multi-file auth regression and propose tests.", "use-subagent-orchestrator"),
-        ("Rename this variable in one file.", "single-thread-likely"),
-        ("Do not use subagents. Debug the flaky auth regression linearly.", "orchestration-opt-out"),
-        ("You are a subagent. Review src/auth.ts and return findings.", "recursion-guard"),
-    ]
-    for prompt, expected in cases:
-        context = run(prompt)
-        print("PROMPT:", prompt)
-        print("CONTEXT:", context.splitlines()[0] if context else "<silent>")
-        if expected:
-            assert context is not None, prompt
-            assert expected.lower() in context.lower(), (expected, context)
-        else:
-            assert context is None, (prompt, context)
     return 0
 
 

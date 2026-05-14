@@ -14,3 +14,4 @@ node_modules/
 *.log
 tmp/
 temp/
+evals/live_traces/

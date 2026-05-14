@@ -20,6 +20,24 @@ EXPECTED_DECISIONS = {
     "orchestration-opt-out",
     "recursion-guard",
 }
+REQUIRED_PROMPT_KEYS = {
+    "id",
+    "prompt",
+    "expected_decision",
+    "should_spawn",
+    "must_not_spawn",
+    "rubric_ids",
+}
+ALLOWED_PROMPT_KEYS = REQUIRED_PROMPT_KEYS | {
+    "forbidden_command_terms",
+    "host_rules_fixture",
+    "max_command_count",
+    "max_spawn_count",
+    "expected_spawn_agents",
+    "forbidden_tool_names",
+    "requires_wait",
+    "required_final_text_terms",
+}
 
 
 def load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -39,6 +57,15 @@ def run_grader(prompts: Path, traces: Path) -> dict[str, object]:
     )
     assert proc.returncode in {0, 1}, proc.stderr + proc.stdout
     return json.loads(proc.stdout)
+
+
+def run_grader_process(prompts: Path, traces: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(GRADER), "--prompts", str(prompts), "--traces", str(traces)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def run_hook(prompt: str) -> str:
@@ -71,12 +98,23 @@ def message_event(text: str) -> dict[str, object]:
     }
 
 
-def spawn_event() -> dict[str, object]:
+def spawn_event(agent_type: str = "so_mapper") -> dict[str, object]:
     return {
         "type": "item.started",
         "item": {
             "type": "function_call",
             "name": "spawn_agent",
+            "arguments": {"agent_type": agent_type},
+        },
+    }
+
+
+def wait_event() -> dict[str, object]:
+    return {
+        "type": "item.started",
+        "item": {
+            "type": "function_call",
+            "name": "wait_agent",
         },
     }
 
@@ -104,8 +142,59 @@ def test_eval_prompt_set_is_balanced_and_explicit() -> None:
     assert any(case.get("host_rules_fixture") for case in cases)
 
     for case in cases:
+        unknown_keys = set(case) - ALLOWED_PROMPT_KEYS
+        missing_keys = REQUIRED_PROMPT_KEYS - set(case)
+        assert not unknown_keys, case
+        assert not missing_keys, case
         assert isinstance(case.get("prompt"), str) and case["prompt"].strip(), case
+        assert case["expected_decision"] in EXPECTED_DECISIONS, case
+        assert isinstance(case.get("should_spawn"), bool), case
+        assert isinstance(case.get("must_not_spawn"), bool), case
+        assert not (case["should_spawn"] and case["must_not_spawn"]), case
         assert isinstance(case.get("rubric_ids"), list) and case["rubric_ids"], case
+        assert all(isinstance(rubric_id, str) and rubric_id for rubric_id in case["rubric_ids"]), case
+
+
+def test_grader_rejects_invalid_prompt_rows() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        traces.mkdir()
+        write_jsonl(
+            prompts,
+            [
+                {
+                    "id": "broken",
+                    "prompt": "Debug this failure.",
+                    "expected_decision": "not-a-decision",
+                    "should_spawn": True,
+                    "must_not_spawn": True,
+                    "max_command_count": True,
+                    "rubric_ids": ["decision"],
+                    "extra": "ignored today",
+                },
+            ],
+        )
+
+        proc = run_grader_process(prompts, traces)
+
+    assert proc.returncode == 2
+    assert "invalid prompt corpus" in proc.stderr
+    assert "unknown keys" in proc.stderr
+    assert "invalid expected_decision" in proc.stderr
+    assert "max_command_count must be a non-negative integer" in proc.stderr
+    assert "should_spawn and must_not_spawn cannot both be true" in proc.stderr
+
+
+def test_parallel_eval_cases_define_trace_contracts() -> None:
+    for case in load_jsonl(PROMPTS):
+        if case.get("should_spawn") is not True:
+            continue
+        assert isinstance(case.get("expected_spawn_agents"), list) and case["expected_spawn_agents"], case
+        assert case.get("requires_wait") is True, case
+        assert isinstance(case.get("required_final_text_terms"), list), case
+        assert "Synthesis:" in case["required_final_text_terms"], case
 
 
 def test_eval_prompt_set_matches_hook_classifier() -> None:
@@ -128,6 +217,9 @@ def test_eval_grader_scores_synthetic_traces() -> None:
                     "expected_decision": "use-subagent-orchestrator",
                     "should_spawn": True,
                     "must_not_spawn": False,
+                    "expected_spawn_agents": ["so_mapper"],
+                    "requires_wait": True,
+                    "required_final_text_terms": ["Synthesis:", "Tests/verification:"],
                     "rubric_ids": ["decision", "spawn"],
                 },
                 {
@@ -145,6 +237,8 @@ def test_eval_grader_scores_synthetic_traces() -> None:
             [
                 message_event("Subagent orchestration gate\nResult: use-subagent-orchestrator\nReason: Strong orchestration signals detected."),
                 spawn_event(),
+                wait_event(),
+                message_event("Synthesis:\n- Tests/verification: run targeted checks."),
             ],
         )
         write_jsonl(
@@ -158,6 +252,187 @@ def test_eval_grader_scores_synthetic_traces() -> None:
 
     assert result["overall_pass"] is True
     assert result["summary"] == {"passed": 2, "failed": 0, "missing": 0}
+
+
+def test_eval_grader_fails_missing_required_wait_after_spawn() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        traces.mkdir()
+        write_jsonl(
+            prompts,
+            [
+                {
+                    "id": "parallel-debug",
+                    "prompt": "Debug a flaky regression across API and web tests.",
+                    "expected_decision": "use-subagent-orchestrator",
+                    "should_spawn": True,
+                    "must_not_spawn": False,
+                    "expected_spawn_agents": ["so_mapper"],
+                    "requires_wait": True,
+                    "rubric_ids": ["decision", "spawn", "wait"],
+                },
+            ],
+        )
+        write_jsonl(
+            traces / "parallel-debug.jsonl",
+            [
+                message_event("Subagent orchestration gate\nResult: use-subagent-orchestrator\nReason: Strong orchestration signals detected."),
+                spawn_event("so_mapper"),
+            ],
+        )
+
+        result = run_grader(prompts, traces)
+
+    assert result["overall_pass"] is False
+    assert result["cases"][0]["checks"]["wait_required"] is False
+
+
+def test_eval_grader_requires_wait_after_final_spawn() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        traces.mkdir()
+        write_jsonl(
+            prompts,
+            [
+                {
+                    "id": "parallel-debug",
+                    "prompt": "Debug a flaky regression across API and web tests.",
+                    "expected_decision": "use-subagent-orchestrator",
+                    "should_spawn": True,
+                    "must_not_spawn": False,
+                    "expected_spawn_agents": ["so_mapper", "so_tester"],
+                    "requires_wait": True,
+                    "rubric_ids": ["decision", "spawn", "wait"],
+                },
+            ],
+        )
+        write_jsonl(
+            traces / "parallel-debug.jsonl",
+            [
+                message_event("Subagent orchestration gate\nResult: use-subagent-orchestrator\nReason: Strong orchestration signals detected."),
+                spawn_event("so_mapper"),
+                wait_event(),
+                spawn_event("so_tester"),
+            ],
+        )
+
+        result = run_grader(prompts, traces)
+
+    assert result["overall_pass"] is False
+    assert result["cases"][0]["checks"]["wait_required"] is False
+
+
+def test_eval_grader_fails_missing_expected_spawn_agent() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        traces.mkdir()
+        write_jsonl(
+            prompts,
+            [
+                {
+                    "id": "parallel-debug",
+                    "prompt": "Debug a flaky regression across API and web tests.",
+                    "expected_decision": "use-subagent-orchestrator",
+                    "should_spawn": True,
+                    "must_not_spawn": False,
+                    "expected_spawn_agents": ["so_mapper", "so_tester"],
+                    "rubric_ids": ["decision", "spawn_agents"],
+                },
+            ],
+        )
+        write_jsonl(
+            traces / "parallel-debug.jsonl",
+            [
+                message_event("Subagent orchestration gate\nResult: use-subagent-orchestrator\nReason: Strong orchestration signals detected."),
+                spawn_event("so_mapper"),
+            ],
+        )
+
+        result = run_grader(prompts, traces)
+
+    assert result["overall_pass"] is False
+    assert result["cases"][0]["checks"]["expected_spawn_agents"] is False
+
+
+def test_eval_grader_fails_missing_required_final_text() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        traces.mkdir()
+        write_jsonl(
+            prompts,
+            [
+                {
+                    "id": "parallel-debug",
+                    "prompt": "Debug a flaky regression across API and web tests.",
+                    "expected_decision": "use-subagent-orchestrator",
+                    "should_spawn": True,
+                    "must_not_spawn": False,
+                    "required_final_text_terms": ["Synthesis:", "Tests/verification:"],
+                    "rubric_ids": ["decision", "synthesis"],
+                },
+            ],
+        )
+        write_jsonl(
+            traces / "parallel-debug.jsonl",
+            [
+                message_event("Subagent orchestration gate\nResult: use-subagent-orchestrator\nReason: Strong orchestration signals detected."),
+                spawn_event("so_mapper"),
+                wait_event(),
+                message_event("Done."),
+            ],
+        )
+
+        result = run_grader(prompts, traces)
+
+    assert result["overall_pass"] is False
+    assert result["cases"][0]["checks"]["required_final_text"] is False
+
+
+def test_eval_grader_scores_realistic_fixture_traces() -> None:
+    result = run_grader(PROMPTS, EVALS_ROOT / "trace_fixtures" / "pass")
+    assert result["overall_pass"] is True
+
+
+def test_eval_grader_fails_realistic_negative_fixture_traces() -> None:
+    result = run_grader(PROMPTS, EVALS_ROOT / "trace_fixtures" / "fail")
+    assert result["overall_pass"] is False
+    failed_cases = {case["id"]: case for case in result["cases"] if case["passed"] is False}
+    assert failed_cases["parallel-auth-debug"]["checks"]["wait_required"] is False
+    assert failed_cases["parallel-security-architecture"]["checks"]["expected_spawn_agents"] is False
+    assert failed_cases["host-rules-branch-review"]["checks"]["forbidden_commands"] is False
+
+
+def test_trace_eval_schema_describes_grader_output() -> None:
+    schema = json.loads((EVALS_ROOT / "trace_eval.schema.json").read_text(encoding="utf-8"))
+    case_schema = schema["properties"]["cases"]["items"]
+    case_properties = case_schema["properties"]
+    check_properties = case_properties["checks"]["properties"]
+
+    assert "spawn_count" in case_properties
+    assert "spawned_agents" in case_properties
+    assert case_properties["checks"]["additionalProperties"] is False
+    for check_name in [
+        "trace_exists",
+        "decision",
+        "spawn_required",
+        "no_unwanted_spawn",
+        "expected_spawn_agents",
+        "forbidden_tool_names",
+        "forbidden_commands",
+        "command_budget",
+        "spawn_budget",
+        "wait_required",
+        "required_final_text",
+    ]:
+        assert check_properties[check_name]["type"] == "boolean"
 
 
 def test_eval_grader_fails_missing_required_spawn() -> None:
