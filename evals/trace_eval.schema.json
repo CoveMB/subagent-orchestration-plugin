@@ -40,6 +40,10 @@
           "decision": {
             "type": ["string", "null"]
           },
+          "command_count": {
+            "type": "integer",
+            "minimum": 0
+          },
           "spawn_attempted": {
             "type": "boolean"
           },

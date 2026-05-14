@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,11 @@ CUSTOM_AGENT_NAMES = (
     "so_designer",
     "so_implementer",
 )
+
+
+@dataclass(frozen=True)
+class GradingOptions:
+    enforce_command_budget: bool
 
 
 class PromptCorpusError(ValueError):
@@ -154,6 +160,17 @@ def command_fragments(event: dict[str, Any]) -> list[str]:
     return [fragment for candidate in candidates for fragment in text_fragments(candidate)]
 
 
+def command_identity(event: dict[str, Any], event_index: int) -> str | None:
+    fragments = command_fragments(event)
+    if not fragments:
+        return None
+
+    item = event.get("item")
+    if isinstance(item, dict) and isinstance(item.get("id"), str):
+        return item["id"]
+    return "\n".join(fragments) or str(event_index)
+
+
 def first_decision(events: list[dict[str, Any]]) -> str | None:
     for event in events:
         text = event_text(event)
@@ -199,7 +216,18 @@ def has_wait_after_spawn(events: list[dict[str, Any]]) -> bool:
 
 
 def command_count(events: list[dict[str, Any]]) -> int:
-    return sum(1 for event in events if command_fragments(event))
+    command_identities = {
+        identity
+        for event_index, event in enumerate(events)
+        if (identity := command_identity(event, event_index)) is not None
+    }
+    return len(command_identities)
+
+
+def command_budget_passes(max_commands: int | None, observed_command_count: int, options: GradingOptions) -> bool:
+    if max_commands is None or not options.enforce_command_budget:
+        return True
+    return observed_command_count <= max_commands
 
 
 def has_forbidden_command(events: list[dict[str, Any]], forbidden_terms: tuple[str, ...]) -> bool:
@@ -249,7 +277,7 @@ def case_forbidden_terms(case: dict[str, Any]) -> tuple[str, ...]:
     return DEFAULT_FORBIDDEN_COMMAND_TERMS
 
 
-def score_case(case: dict[str, Any], trace_path: Path) -> dict[str, Any]:
+def score_case(case: dict[str, Any], trace_path: Path, options: GradingOptions) -> dict[str, Any]:
     if not trace_path.exists():
         return {
             "id": case["id"],
@@ -268,6 +296,8 @@ def score_case(case: dict[str, Any], trace_path: Path) -> dict[str, Any]:
     max_spawns = expected_int(case, "max_spawn_count")
     forbidden_terms = case_forbidden_terms(case)
     observed_spawned_agents = spawned_agent_names(events)
+    observed_command_count = command_count(events)
+    observed_spawn_count = spawn_count(events)
     checks = {
         "trace_exists": True,
         "decision": decision == case.get("expected_decision"),
@@ -276,8 +306,8 @@ def score_case(case: dict[str, Any], trace_path: Path) -> dict[str, Any]:
         "expected_spawn_agents": not expected_spawn_agents or set(expected_spawn_agents) <= observed_spawned_agents,
         "forbidden_tool_names": not has_forbidden_tool_call(events, forbidden_tool_names),
         "forbidden_commands": not has_forbidden_command(events, forbidden_terms),
-        "command_budget": max_commands is None or command_count(events) <= max_commands,
-        "spawn_budget": max_spawns is None or spawn_count(events) <= max_spawns,
+        "command_budget": command_budget_passes(max_commands, observed_command_count, options),
+        "spawn_budget": max_spawns is None or observed_spawn_count <= max_spawns,
         "wait_required": not expected_bool(case, "requires_wait") or has_wait_after_spawn(events),
         "required_final_text": not required_final_text_terms or contains_all_terms(message_text(events), required_final_text_terms),
     }
@@ -286,8 +316,9 @@ def score_case(case: dict[str, Any], trace_path: Path) -> dict[str, Any]:
         "passed": all(checks.values()),
         "missing": False,
         "decision": decision,
+        "command_count": observed_command_count,
         "spawn_attempted": spawn_attempted,
-        "spawn_count": spawn_count(events),
+        "spawn_count": observed_spawn_count,
         "spawned_agents": sorted(observed_spawned_agents),
         "checks": checks,
     }
@@ -300,10 +331,17 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, int]:
     return {"passed": passed, "failed": failed, "missing": missing}
 
 
-def grade(prompts_path: Path, traces_path: Path) -> dict[str, Any]:
+def grading_options_for_profile(profile: str) -> GradingOptions:
+    if profile == "live":
+        return GradingOptions(enforce_command_budget=False)
+    return GradingOptions(enforce_command_budget=True)
+
+
+def grade(prompts_path: Path, traces_path: Path, profile: str = "offline") -> dict[str, Any]:
     cases = load_jsonl(prompts_path)
     validate_cases(cases)
-    results = [score_case(case, traces_path / f"{case['id']}.jsonl") for case in cases]
+    options = grading_options_for_profile(profile)
+    results = [score_case(case, traces_path / f"{case['id']}.jsonl", options) for case in cases]
     summary = summarize(results)
     return {
         "overall_pass": summary["failed"] == 0 and summary["missing"] == 0,
@@ -316,13 +354,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Grade subagent-orchestrator JSONL traces against eval prompt expectations.")
     parser.add_argument("--prompts", required=True, type=Path, help="Path to eval prompt JSONL.")
     parser.add_argument("--traces", required=True, type=Path, help="Directory containing one <id>.jsonl trace per prompt.")
+    parser.add_argument("--profile", choices=("offline", "live"), default="offline", help="offline enforces command budgets; live records command counts without failing on budgets.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        result = grade(args.prompts, args.traces)
+        result = grade(args.prompts, args.traces, profile=args.profile)
     except PromptCorpusError as exc:
         print(f"invalid prompt corpus: {exc}", file=sys.stderr)
         return 2

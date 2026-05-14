@@ -41,6 +41,27 @@ def write_fake_codex(path: Path) -> None:
     path.chmod(path.stat().st_mode | 0o111)
 
 
+def write_command_heavy_fake_codex(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json",
+                "for index in range(6):",
+                "    command = f'echo command-{index}'",
+                "    event = {'type': 'item.completed', 'item': {'id': f'item_{index}', 'type': 'command_execution', 'command': command}}",
+                "    print(json.dumps(event))",
+                "event = {'type': 'item.completed', 'item': {'type': 'message', 'content': [{'type': 'output_text', 'text': 'done'}]}}",
+                "print(json.dumps(event))",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | 0o111)
+
+
 def run_live_runner(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(LIVE_RUNNER), *arguments],
@@ -89,6 +110,7 @@ def test_live_runner_dry_run_does_not_create_trace_files() -> None:
                 "simple-repository-question",
                 "--codex-bin",
                 "fake-codex",
+                "--codex-arg=--ignore-user-config",
                 "--dry-run",
             ],
             ROOT,
@@ -98,7 +120,7 @@ def test_live_runner_dry_run_does_not_create_trace_files() -> None:
     output = json.loads(proc.stdout)
     assert output["dry_run"] is True
     assert output["selected_cases"] == ["simple-repository-question"]
-    assert output["commands"][0][-3:] == ["exec", "--json", "What does this repository do?"]
+    assert output["commands"][0][-4:] == ["exec", "--ignore-user-config", "--json", "What does this repository do?"]
     assert not traces.exists()
 
 
@@ -141,6 +163,70 @@ def test_live_runner_captures_filtered_trace_and_grades_it() -> None:
     assert selected_prompts_exists
     assert grade_exists
     assert not unselected_trace_exists
+
+
+def test_live_runner_records_local_hook_context_before_live_events() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        fake_codex = root / "fake_codex.py"
+        write_jsonl(prompts, prompt_rows())
+        write_fake_codex(fake_codex)
+
+        proc = run_live_runner(
+            [
+                "--prompts",
+                str(prompts),
+                "--traces",
+                str(traces),
+                "--case",
+                "simple-repository-question",
+                "--codex-bin",
+                str(fake_codex),
+            ],
+            ROOT,
+        )
+
+        trace_rows = [
+            json.loads(line)
+            for line in (traces / "simple-repository-question.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert trace_rows[0]["type"] == "hook.context"
+    assert "Result: single-thread-likely" in json.dumps(trace_rows[0])
+
+
+def test_live_runner_uses_live_grading_profile_for_command_budget() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        fake_codex = root / "fake_codex.py"
+        write_jsonl(prompts, prompt_rows())
+        write_command_heavy_fake_codex(fake_codex)
+
+        proc = run_live_runner(
+            [
+                "--prompts",
+                str(prompts),
+                "--traces",
+                str(traces),
+                "--case",
+                "simple-repository-question",
+                "--codex-bin",
+                str(fake_codex),
+            ],
+            ROOT,
+        )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    result = json.loads(proc.stdout)
+    assert result["grade"]["overall_pass"] is True
+    assert result["grade"]["cases"][0]["command_count"] == 6
+    assert result["grade"]["cases"][0]["checks"]["command_budget"] is True
 
 
 def test_live_runner_rejects_unknown_case_filter() -> None:

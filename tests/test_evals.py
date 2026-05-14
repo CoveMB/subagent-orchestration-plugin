@@ -48,9 +48,9 @@ def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     path.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="utf-8")
 
 
-def run_grader(prompts: Path, traces: Path) -> dict[str, object]:
+def run_grader(prompts: Path, traces: Path, extra_args: list[str] | None = None) -> dict[str, object]:
     proc = subprocess.run(
-        [sys.executable, str(GRADER), "--prompts", str(prompts), "--traces", str(traces)],
+        [sys.executable, str(GRADER), "--prompts", str(prompts), "--traces", str(traces), *(extra_args or [])],
         text=True,
         capture_output=True,
         check=False,
@@ -416,6 +416,7 @@ def test_trace_eval_schema_describes_grader_output() -> None:
     case_properties = case_schema["properties"]
     check_properties = case_properties["checks"]["properties"]
 
+    assert "command_count" in case_properties
     assert "spawn_count" in case_properties
     assert "spawned_agents" in case_properties
     assert case_properties["checks"]["additionalProperties"] is False
@@ -534,6 +535,83 @@ def test_eval_grader_fails_command_budget_regression() -> None:
 
     assert result["overall_pass"] is False
     assert result["cases"][0]["checks"]["command_budget"] is False
+
+
+def test_eval_grader_counts_command_start_and_completion_once() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        traces.mkdir()
+        write_jsonl(
+            prompts,
+            [
+                {
+                    "id": "simple-question",
+                    "prompt": "What does this repository do?",
+                    "expected_decision": "single-thread-likely",
+                    "should_spawn": False,
+                    "must_not_spawn": True,
+                    "max_command_count": 1,
+                    "rubric_ids": ["decision", "efficiency"],
+                },
+            ],
+        )
+        write_jsonl(
+            traces / "simple-question.jsonl",
+            [
+                message_event("Subagent orchestration gate\nResult: single-thread-likely\nReason: Simple-task signals detected."),
+                {
+                    "type": "item.started",
+                    "item": {"id": "item_1", "type": "command_execution", "command": "rg --files"},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {"id": "item_1", "type": "command_execution", "command": "rg --files"},
+                },
+            ],
+        )
+
+        result = run_grader(prompts, traces)
+
+    assert result["overall_pass"] is True
+    assert result["cases"][0]["checks"]["command_budget"] is True
+    assert result["cases"][0]["command_count"] == 1
+
+
+def test_eval_grader_live_profile_records_but_does_not_enforce_command_budget() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        prompts = root / "prompts.jsonl"
+        traces = root / "traces"
+        traces.mkdir()
+        write_jsonl(
+            prompts,
+            [
+                {
+                    "id": "simple-question",
+                    "prompt": "What does this repository do?",
+                    "expected_decision": "single-thread-likely",
+                    "should_spawn": False,
+                    "must_not_spawn": True,
+                    "max_command_count": 0,
+                    "rubric_ids": ["decision", "efficiency"],
+                },
+            ],
+        )
+        write_jsonl(
+            traces / "simple-question.jsonl",
+            [
+                message_event("Subagent orchestration gate\nResult: single-thread-likely\nReason: Simple-task signals detected."),
+                command_event("rg --files"),
+            ],
+        )
+
+        result = run_grader(prompts, traces, ["--profile", "live"])
+
+    assert result["overall_pass"] is True
+    assert result["cases"][0]["checks"]["command_budget"] is True
+    assert result["cases"][0]["command_count"] == 1
 
 
 def test_eval_grader_is_offline_and_does_not_execute_agent_runs() -> None:

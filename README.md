@@ -279,7 +279,19 @@ To grade captured JSONL traces, place one trace per prompt id in a directory as 
 python3 scripts/grade_skill_traces.py --prompts evals/skill_prompts.jsonl --traces path/to/traces
 ```
 
-The grader checks observed `Result:` metadata, spawn attempts, expected spawned agent roles, required waits after spawning, synthesis text, forbidden externally visible commands/tools, and command/spawn-count budgets. It prints structured JSON compatible with `evals/trace_eval.schema.json`.
+The grader checks observed `Result:` metadata, spawn attempts, expected spawned agent roles, required waits after spawning, synthesis text, forbidden externally visible commands/tools, and command/spawn-count budgets. It prints structured JSON compatible with `evals/trace_eval.schema.json`, including observed `command_count` telemetry for each present trace.
+
+The default `offline` profile enforces `max_command_count` for deterministic fixtures and synthetic regressions:
+
+```bash
+python3 scripts/grade_skill_traces.py --prompts evals/skill_prompts.jsonl --traces path/to/traces
+```
+
+Use the `live` profile for real Codex traces. It still reports `command_count`, but it does not fail a case only because live Codex used more shell commands than the offline budget:
+
+```bash
+python3 scripts/grade_skill_traces.py --profile live --prompts evals/skill_prompts.jsonl --traces path/to/live-traces
+```
 
 Representative trace fixtures live under `evals/trace_fixtures/pass` and `evals/trace_fixtures/fail` so the grader itself is tested against realistic saved JSONL events.
 
@@ -299,6 +311,19 @@ python3 scripts/run_live_skill_evals.py --traces evals/live_traces/manual --dry-
 ```
 
 The harness writes `selected_prompts.jsonl`, `<case-id>.jsonl`, optional `<case-id>.stderr.txt`, and `grade.json` into the trace directory. Reusing a trace directory requires `--overwrite`.
+
+Live harness grading uses `--grade-profile live` by default. Pass `--grade-profile offline` when you intentionally want live runs to fail on command budgets.
+
+Each captured trace starts with a synthetic `hook.context` event from the repo-local `hooks/subagent_orchestration_gate.py`, followed by the live `codex exec --json` stream. This makes hook classification visible to the offline grader even when Codex does not expose successful hook `additionalContext` as a JSONL event.
+
+Pass extra `codex exec` flags with repeated `--codex-arg`. For cleaner smoke tests that avoid global user workflow config, use:
+
+```bash
+python3 scripts/run_live_skill_evals.py \
+  --traces evals/live_traces/isolated-smoke \
+  --case simple-repository-question \
+  --codex-arg=--ignore-user-config
+```
 
 ## Safety notes
 

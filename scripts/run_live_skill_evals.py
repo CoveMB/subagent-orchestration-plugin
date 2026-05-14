@@ -12,6 +12,7 @@ from grade_skill_traces import grade, load_jsonl, validate_cases
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROMPTS = ROOT / "evals" / "skill_prompts.jsonl"
+HOOK = ROOT / "hooks" / "subagent_orchestration_gate.py"
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,10 +21,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--traces", type=Path, required=True, help="Directory to write trace JSONL files.")
     parser.add_argument("--case", action="append", default=[], dest="case_ids", help="Prompt case id to run. Repeatable.")
     parser.add_argument("--codex-bin", default="codex", help="Codex executable path or command name.")
+    parser.add_argument("--codex-arg", action="append", default=[], dest="codex_args", help="Extra argument passed to `codex exec` before the prompt. Repeatable.")
     parser.add_argument("--cwd", type=Path, default=ROOT, help="Working directory for live Codex runs.")
     parser.add_argument("--timeout", type=int, default=900, help="Per-case timeout in seconds.")
     parser.add_argument("--dry-run", action="store_true", help="Print selected commands without running Codex.")
     parser.add_argument("--no-grade", action="store_true", help="Capture traces without running the offline grader.")
+    parser.add_argument("--grade-profile", choices=("live", "offline"), default="live", help="Grading profile. live records command counts without failing on command budgets.")
     parser.add_argument("--overwrite", action="store_true", help="Allow replacing existing trace files.")
     return parser.parse_args()
 
@@ -47,8 +50,8 @@ def selected_cases(cases: list[dict[str, Any]], case_ids: list[str]) -> list[dic
     return [cases_by_id[case_id] for case_id in case_ids]
 
 
-def codex_command(codex_bin: str, prompt: str) -> list[str]:
-    return [codex_bin, "exec", "--json", prompt]
+def codex_command(codex_bin: str, codex_args: list[str], prompt: str) -> list[str]:
+    return [codex_bin, "exec", *codex_args, "--json", prompt]
 
 
 def trace_path_for_case(traces_dir: Path, case_id: str) -> Path:
@@ -78,7 +81,7 @@ def ensure_trace_targets_are_writable(traces_dir: Path, cases: list[dict[str, An
 
 def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     case_id = str(case["id"])
-    command = codex_command(args.codex_bin, str(case["prompt"]))
+    command = codex_command(args.codex_bin, args.codex_args, str(case["prompt"]))
     proc = subprocess.run(
         command,
         text=True,
@@ -88,7 +91,7 @@ def run_case(case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
         check=False,
     )
     trace_path = trace_path_for_case(args.traces, case_id)
-    trace_path.write_text(proc.stdout, encoding="utf-8")
+    trace_path.write_text(format_trace_output(case, proc.stdout), encoding="utf-8")
     if proc.stderr:
         trace_path.with_suffix(".stderr.txt").write_text(proc.stderr, encoding="utf-8")
     return {
@@ -110,8 +113,49 @@ def dry_run_output(cases: list[dict[str, Any]], args: argparse.Namespace) -> dic
     return {
         "dry_run": True,
         "selected_cases": [case["id"] for case in cases],
-        "commands": [codex_command(args.codex_bin, str(case["prompt"])) for case in cases],
+        "commands": [codex_command(args.codex_bin, args.codex_args, str(case["prompt"])) for case in cases],
     }
+
+
+def local_hook_context(prompt: str) -> str:
+    proc = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps({"prompt": prompt}),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(f"local hook failed for live eval prompt: {proc.stderr.strip()}")
+    data = json.loads(proc.stdout)
+    hook_output = data.get("hookSpecificOutput", {})
+    if not isinstance(hook_output, dict) or not isinstance(hook_output.get("additionalContext"), str):
+        raise ValueError("local hook did not return hookSpecificOutput.additionalContext")
+    return hook_output["additionalContext"]
+
+
+def hook_context_event(case: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "hook.context",
+        "source": "local-subagent-orchestration-gate",
+        "case_id": case["id"],
+        "item": {
+            "type": "message",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": local_hook_context(str(case["prompt"])),
+                }
+            ],
+        },
+    }
+
+
+def format_trace_output(case: dict[str, Any], stdout: str) -> str:
+    lines = [json.dumps(hook_context_event(case), sort_keys=True)]
+    if stdout:
+        lines.extend(line for line in stdout.splitlines() if line.strip())
+    return "\n".join(lines) + "\n"
 
 
 def live_result(cases: list[dict[str, Any]], run_results: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
@@ -131,7 +175,7 @@ def live_result(cases: list[dict[str, Any]], run_results: list[dict[str, Any]], 
     if failed_runs or args.no_grade:
         return result
 
-    grade_result = grade(selected_prompts_path, args.traces)
+    grade_result = grade(selected_prompts_path, args.traces, profile=args.grade_profile)
     grade_path = args.traces / "grade.json"
     write_json(grade_path, grade_result)
     result["grade"] = grade_result
