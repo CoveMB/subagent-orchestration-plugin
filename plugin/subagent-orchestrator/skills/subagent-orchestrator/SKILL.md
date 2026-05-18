@@ -120,6 +120,8 @@ Then spawn the agents, wait for all results, and synthesize before acting.
 
 Actual spawning is part of the contract. When the execution shape is `parallel-subagents`, call `spawn_agent` or the available subagent-spawning tool in the same turn after defining bounded roles. Do not stop at a plan, recommendation, or statement that subagents would be useful. If no subagent-spawning tool is available, or a higher-priority instruction blocks spawning, state that blocker and proceed with the closest sequential fallback.
 
+When the available subagent-spawning tool does not expose a dedicated `agent_type` parameter, begin the spawned task prompt with `agent_type: <agent-name>` so the role remains auditable in live traces. Use the exact names below, such as `so_mapper`, `so_tester`, and `so_reviewer`. When using a custom `agent_type`, keep `fork_context` unset and include the required context in the spawned task prompt instead.
+
 ## Execution Runbook
 
 Use this order when the decision is `parallel-subagents`:
@@ -136,12 +138,13 @@ Use this order when the decision is `parallel-subagents`:
 ### Spawn Template
 
 ```text
-Spawn <agent-name>:
-- mode: read-only | workspace-write
-- scope: <files, subsystem, or question>
-- task: <specific bounded task>
-- constraints: do not edit files; do not spawn more agents; report uncertainty
-- expected output: facts, file paths, evidence, risks, tests, confidence
+Spawn <agent-name> prompt:
+agent_type: <agent-name>
+mode: read-only | workspace-write
+scope: <files, subsystem, or question>
+task: <specific bounded task>
+constraints: do not edit files; do not spawn more agents; report uncertainty
+expected output: facts, file paths, evidence, risks, tests, confidence
 ```
 
 For workspace-write tasks, add:

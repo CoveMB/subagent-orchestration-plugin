@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "hooks" / "subagent_orchestration_gate.py"
 INSTALLER = ROOT / "scripts" / "install_user.py"
 UNINSTALLER = ROOT / "scripts" / "uninstall_user.py"
+HOOK_MODE_ENV = "SUBAGENT_ORCHESTRATION_GATE_MODE"
 BOUNDARY_SENTENCE = (
     "This orchestration gate only affects execution shape; it does not override repository source-of-truth, "
     "citation, manuscript, safety, privacy, vendor, approval, or testing rules."
@@ -41,32 +42,73 @@ THRESHOLD_EDGE_CASES = [
     ("Write a quick review of tests and explain it.", "orchestration-check"),
     ("How should we verify this?", "single-thread-likely"),
 ]
+METAMORPHIC_DECISION_CASES = [
+    (
+        "Debug flaky regression across API and web tests.",
+        "use-subagent-orchestrator",
+        [
+            "Please debug flaky regression across API and web tests.",
+            "Debug flaky regression across web and API tests, then report the likely root cause.",
+            "How do subagents work together to debug a flaky multi-file auth regression and propose tests?",
+            "How should subagents work together to debug a flaky multi-file auth regression and propose tests?",
+        ],
+    ),
+    (
+        "Do not use subagents. Debug the flaky auth regression linearly.",
+        "orchestration-opt-out",
+        [
+            "Please do not use subagents even though this is a flaky API and web regression.",
+            "Debug the flaky auth regression linearly. Don't use subagents.",
+        ],
+    ),
+    (
+        "You are so_reviewer. Audit src/auth.ts and return findings.",
+        "recursion-guard",
+        [
+            "You are so_reviewer. Please audit src/auth.ts for security risk.",
+            "Task for so_reviewer: audit src/auth.ts and return findings.",
+        ],
+    ),
+]
+FALSE_POSITIVE_CASES = [
+    ("Explain how subagents work without using them.", "single-thread-likely"),
+    ("Summarize the subagent-orchestrator skill behavior.", "single-thread-likely"),
+    ("Review the README wording for clarity.", "single-thread-default"),
+]
 
 
-def run_hook_with_input(input_text: str) -> dict[str, object]:
+def hook_subprocess_environment(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    environment = dict(os.environ)
+    environment.pop(HOOK_MODE_ENV, None)
+    environment.update(extra_env or {})
+    return environment
+
+
+def run_hook_with_input(input_text: str, extra_env: dict[str, str] | None = None) -> dict[str, object]:
     proc = subprocess.run(
         [sys.executable, str(HOOK)],
         input=input_text,
         text=True,
         capture_output=True,
         check=True,
+        env=hook_subprocess_environment(extra_env),
     )
     return json.loads(proc.stdout)
 
 
-def run_payload(prompt: object) -> dict[str, object]:
-    return run_hook_with_input(json.dumps({"prompt": prompt}))
+def run_payload(prompt: object, extra_env: dict[str, str] | None = None) -> dict[str, object]:
+    return run_hook_with_input(json.dumps({"prompt": prompt}), extra_env)
 
 
-def hook_specific_output(prompt: str) -> dict[str, object]:
-    data = run_payload(prompt)
+def hook_specific_output(prompt: str, extra_env: dict[str, str] | None = None) -> dict[str, object]:
+    data = run_payload(prompt, extra_env)
     hook_output = data.get("hookSpecificOutput", {})
     assert isinstance(hook_output, dict), data
     return hook_output
 
 
-def run(prompt: str) -> str | None:
-    hook_output = hook_specific_output(prompt)
+def run(prompt: str, extra_env: dict[str, str] | None = None) -> str | None:
+    hook_output = hook_specific_output(prompt, extra_env)
     return hook_output.get("additionalContext")
 
 
@@ -478,13 +520,15 @@ def test_project_config_patch_is_idempotent_and_uses_git_root_command() -> None:
         assert first_config == second_config
         assert "existing = true" in second_config
         assert "max_threads_backup = 99" in second_config
-        assert "codex_hooks = true" in second_config
+        assert "hooks = true" in second_config
+        deprecated_hooks_key = "codex" + "_hooks"
+        assert deprecated_hooks_key not in second_config
         assert "max_threads = 4" in second_config
         assert "max_depth = 1" in second_config
         assert "statusMessage = \"Evaluating subagent orchestration\"" in second_config
         assert "command = 'python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/subagent_orchestration_gate.py\"'" in second_config
         assert second_config.count("subagent_orchestration_gate.py") == 1
-        assert tomllib.loads(second_config)["features"]["codex_hooks"] is True
+        assert tomllib.loads(second_config)["features"]["hooks"] is True
         assert config.with_suffix(".toml.bak").exists()
 
 
@@ -601,6 +645,50 @@ def test_project_repo_marketplace_writes_vendored_plugin_path() -> None:
             },
             "category": "Productivity",
         }
+
+
+def test_project_activation_smoke_runs_installed_hook_and_marketplace_plugin() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        home = root / "home"
+        app_home = root / "app"
+        repo = root / "repo"
+        repo.mkdir()
+
+        proc = run_installer(
+            [
+                "--scope",
+                "project",
+                "--repo-root",
+                str(repo),
+                "--activate-gate",
+                "--with-repo-marketplace",
+            ],
+            home,
+            app_home,
+        )
+        assert_installer_ok(proc)
+
+        hook_proc = subprocess.run(
+            [sys.executable, str(project_hook_path(repo))],
+            input=json.dumps({"prompt": "Debug a flaky regression across API and web tests."}),
+            text=True,
+            capture_output=True,
+            cwd=repo,
+            check=True,
+        )
+        hook_output = json.loads(hook_proc.stdout)
+        marketplace = json.loads(project_marketplace_path(repo).read_text(encoding="utf-8"))
+        plugin = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "subagent-orchestrator")
+        plugin_root = repo / plugin["source"]["path"]
+        plugin_manifest_exists = (plugin_root / ".codex-plugin" / "plugin.json").exists()
+        orchestrator_skill_exists = (plugin_root / "skills" / "subagent-orchestrator" / "SKILL.md").exists()
+        using_skill_exists = (plugin_root / "skills" / "using-subagent-orchestrator" / "SKILL.md").exists()
+
+    assert "\nResult: use-subagent-orchestrator\n" in hook_output["hookSpecificOutput"]["additionalContext"]
+    assert plugin_manifest_exists
+    assert orchestrator_skill_exists
+    assert using_skill_exists
 
 
 def test_project_vendored_hook_wrapper_fails_open_when_vendor_hook_is_missing() -> None:
@@ -929,8 +1017,8 @@ def test_classifier_detects_broad_investigations() -> None:
 
 def test_classifier_detects_broad_validation_sweeps() -> None:
     prompt = (
-        "validate no remaining mention of previous plugin and make sure all decumentations "
-        "have been properly updated and ensure the qa document has been properly updated "
+        "validate no remaining mention of legacy plugin and make sure all documentation "
+        "has been properly updated and ensure the qa document has been properly updated "
         "and validate the setup as been properly updated"
     )
     context = assert_context_reports_result_and_reason(prompt, "use-subagent-orchestrator")
@@ -980,6 +1068,16 @@ def test_classifier_threshold_edges_stay_stable() -> None:
     assert_prompt_decisions(THRESHOLD_EDGE_CASES)
 
 
+def test_classifier_metamorphic_variants_preserve_decisions() -> None:
+    for base_prompt, expected_result, variants in METAMORPHIC_DECISION_CASES:
+        assert_context_reports_result_and_reason(base_prompt, expected_result)
+        assert_prompt_decisions([(variant, expected_result) for variant in variants])
+
+
+def test_classifier_avoids_subagent_topic_false_positives() -> None:
+    assert_prompt_decisions(FALSE_POSITIVE_CASES)
+
+
 def test_classifier_recursion_guard_variants() -> None:
     assert_prompt_decisions([
         ("Dispatched as a subagent: review src/auth.ts.", "recursion-guard"),
@@ -1017,6 +1115,44 @@ def test_classifier_returns_only_result_for_default_and_simple_prompts() -> None
         assert BOUNDARY_SENTENCE not in context, (prompt, context)
         assert "Compatibility rules" not in context, (prompt, context)
         assert "Subagent orchestration gate quiet hint" not in context, (prompt, context)
+
+
+def test_hook_ignores_live_eval_contract_mode_environment() -> None:
+    contract_env = {HOOK_MODE_ENV: "contract"}
+    context = run("Debug a flaky multi-file auth regression and propose tests.", contract_env)
+    assert context is not None
+    assert context.splitlines() == [
+        "Subagent orchestration gate",
+        "Result: use-subagent-orchestrator",
+        "Reason: Strong orchestration signals detected (architecture/refactor, debugging/root-cause, tests/verification).",
+    ]
+    assert "Contract mode: live-eval spawn contract." not in context
+
+    simple_context = run("What does this repository do?", contract_env)
+    assert simple_context is not None
+    assert simple_context.splitlines() == [
+        "Subagent orchestration gate",
+        "Result: single-thread-likely",
+        "Reason: Simple-task signals detected (simple question).",
+    ]
+
+
+def test_hook_test_helper_does_not_inherit_hook_mode_environment_by_default() -> None:
+    previous_value = os.environ.get(HOOK_MODE_ENV)
+    os.environ[HOOK_MODE_ENV] = "contract"
+    try:
+        context = run("Debug a flaky multi-file auth regression and propose tests.")
+        explicit_context = run("Debug a flaky multi-file auth regression and propose tests.", {HOOK_MODE_ENV: "contract"})
+    finally:
+        if previous_value is None:
+            os.environ.pop(HOOK_MODE_ENV, None)
+        else:
+            os.environ[HOOK_MODE_ENV] = previous_value
+
+    assert context is not None
+    assert "Contract mode: live-eval spawn contract." not in context
+    assert explicit_context is not None
+    assert "Contract mode: live-eval spawn contract." not in explicit_context
 
 
 def test_classifier_always_reports_result_and_reason() -> None:
@@ -1139,6 +1275,20 @@ def test_github_actions_runs_check_script() -> None:
     assert "push:" in text
     assert "bash scripts/check.sh" in text
     assert "python-version: '3.11'" in text
+
+
+def test_readme_documents_ci_test_surface() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "## CI / maintainer checks" in text
+    assert "GitHub Actions" in text
+    assert "pushes to `main`" in text
+    assert "pull requests" in text
+    assert "`bash scripts/check.sh`" in text
+    assert "`tests/test_hook.py`" in text
+    assert "`tests/test_skills.py`" in text
+    assert "`tests/test_evals.py`" in text
+    assert "`tests/test_live_evals.py`" in text
+    assert "real live Codex sessions stay outside CI" in text
 
 
 def run_all_tests() -> None:

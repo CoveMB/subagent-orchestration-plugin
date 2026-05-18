@@ -63,6 +63,9 @@
               "trace_exists": {
                 "type": "boolean"
               },
+              "no_timeout": {
+                "type": "boolean"
+              },
               "decision": {
                 "type": "boolean"
               },
@@ -73,6 +76,12 @@
                 "type": "boolean"
               },
               "expected_spawn_agents": {
+                "type": "boolean"
+              },
+              "unique_spawn_agents": {
+                "type": "boolean"
+              },
+              "forbidden_spawn_agents": {
                 "type": "boolean"
               },
               "forbidden_tool_names": {
@@ -88,6 +97,9 @@
                 "type": "boolean"
               },
               "wait_required": {
+                "type": "boolean"
+              },
+              "required_pre_spawn_text": {
                 "type": "boolean"
               },
               "required_final_text": {

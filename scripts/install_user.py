@@ -417,12 +417,12 @@ def remember_config_value(
 def patch_project_config(repo_root: Path, manifest: dict[str, Any], dry_run: bool) -> None:
     path = repo_root / ".codex" / "config.toml"
     original = path.read_text(encoding="utf-8") if path.exists() else ""
-    remember_config_value(manifest, original, "features", "codex_hooks")
+    remember_config_value(manifest, original, "features", "hooks")
     remember_config_value(manifest, original, "agents", "max_threads")
     remember_config_value(manifest, original, "agents", "max_depth")
 
     updated = remove_marked_block(original, MANAGED_CONFIG_START, MANAGED_CONFIG_END)
-    updated = set_toml_table_key(updated, "features", "codex_hooks", "true")
+    updated = set_toml_table_key(updated, "features", "hooks", "true")
     updated = set_toml_table_key(updated, "agents", "max_threads", "4")
     updated = set_toml_table_key(updated, "agents", "max_depth", "1")
     updated = updated.rstrip() + "\n\n" + project_config_block() + "\n"
@@ -570,6 +570,20 @@ def marketplace_plugin_entry(repo_root: Path, source_root: Path) -> dict[str, An
         },
         "category": "Productivity",
     }
+
+
+def install_project_marketplace_plugin(
+    repo_root: Path,
+    source_root: Path,
+    manifest: dict[str, Any],
+    dry_run: bool,
+) -> None:
+    if is_inside(repo_root, source_root):
+        return
+
+    src = source_root / "plugin" / PLUGIN_NAME
+    dst = repo_root / PROJECT_VENDOR_PATH / "plugin" / PLUGIN_NAME
+    copy_project_tree(src, dst, repo_root, manifest, dry_run, "repo marketplace plugin")
 
 
 def default_marketplace() -> dict[str, Any]:
@@ -782,6 +796,7 @@ def install_project(args: argparse.Namespace) -> int:
     if args.with_project_agents:
         install_project_agents(repo_root, source_root, manifest, args.dry_run)
     if args.with_repo_marketplace:
+        install_project_marketplace_plugin(repo_root, source_root, manifest, args.dry_run)
         patch_project_marketplace(repo_root, source_root, manifest, args.dry_run)
         print("Repo marketplace entry added. Caveat: plugin UI enable/disable state is stored in ~/.codex/config.toml.")
     if args.append_project_agents_md:

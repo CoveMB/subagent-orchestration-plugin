@@ -1,4 +1,5 @@
 {"type":"item.completed","item":{"type":"message","content":[{"type":"output_text","text":"Subagent orchestration gate\nResult: use-subagent-orchestrator\nReason: Strong orchestration signals detected."}]}}
+{"type":"item.completed","item":{"type":"message","content":[{"type":"output_text","text":"Subagents:\n- so_mapper\n  mode: read-only\n  scope: hook result variants\n  expected output: result map and inconsistencies\n  constraints: no recursive fan-out\n- so_reviewer\n  mode: read-only\n  scope: wording quality and regressions\n  expected output: concrete wording risks\n  constraints: no recursive fan-out"}]}}
 {"type":"item.started","item":{"type":"function_call","name":"spawn_agent","arguments":{"agent_type":"so_mapper"}}}
 {"type":"item.started","item":{"type":"function_call","name":"spawn_agent","arguments":{"agent_type":"so_reviewer"}}}
 {"type":"item.started","item":{"type":"function_call","name":"wait_agent"}}

@@ -1,7 +1,7 @@
 # Deliberate activation snippet: add or merge into %USERPROFILE%\.codex\config.toml
 # Adjust the python path if needed.
 [features]
-codex_hooks = true
+hooks = true
 
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]

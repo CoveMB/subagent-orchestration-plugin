@@ -1,7 +1,7 @@
 # Deliberate activation snippet: add or merge into ~/.codex/config.toml
 # Adjust the python path if your Codex runtime uses a different interpreter.
 [features]
-codex_hooks = true
+hooks = true
 
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]

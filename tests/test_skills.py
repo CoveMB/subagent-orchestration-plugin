@@ -221,6 +221,9 @@ def test_orchestrator_skill_defines_spawn_boundaries_and_synthesis() -> None:
             "synthesis must include",
             "conflicts or uncertainty",
             "tests/verification",
+            "agent_type: <agent-name>",
+            "keep `fork_context` unset",
+            "spawn <agent-name> prompt:",
         ],
         ORCHESTRATOR_SKILL,
     )

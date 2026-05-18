@@ -1,7 +1,7 @@
 {
-  "name": "local-repo-codex-plugins",
+  "name": "local-repo-plugins",
   "interface": {
-    "displayName": "Local Repo Codex Plugins"
+    "displayName": "Local Repo Plugins"
   },
   "plugins": [
     {

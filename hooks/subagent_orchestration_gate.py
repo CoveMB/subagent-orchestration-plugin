@@ -86,6 +86,11 @@ def format_signal_reason(message: str, hits: Iterable[str]) -> str:
     return f"{message} ({signal_hits})."
 
 
+def has_only_topic_complex_hits(hits: Iterable[str]) -> bool:
+    unique_hits = set(hits)
+    return not unique_hits or unique_hits <= {"explicit subagents"}
+
+
 OPTOUT_SIGNALS = (
     SignalSet("explicit user opt-out", 99, (
         r"\bdo not use sub[- ]?agents?\b",
@@ -128,6 +133,14 @@ CONDITIONAL_ORCHESTRATION_SIGNALS = (
         r"\b(?:sub[- ]?agents?|orchestrat(?:ion|e))\b.*\bunless (?:useful|valuable|needed|necessary|helpful)\b",
         r"\b(?:use|spawn|run)\b.*\b(?:sub[- ]?agents?|parallel agents?)\b.*\bonly if (?:useful|valuable|needed|necessary|helpful)\b",
         r"\b(?:sub[- ]?agents?|parallel agents?|orchestrat(?:ion|e))\b.*\bonly if (?:useful|valuable|needed|necessary|helpful)\b",
+    )),
+)
+
+EDUCATIONAL_TOPIC_SIGNALS = (
+    SignalSet("subagent topic explanation", 4, (
+        r"^\s*(?:explain|summari[sz]e)\b.{0,120}\b(?:sub[- ]?agents?|orchestrat(?:or|ion|e))\b",
+        r"^\s*(?:what|why|how)\b.{0,120}\b(?:sub[- ]?agents?|orchestrat(?:or|ion|e))\b.{0,80}\b(?:work|works|mean|means|behav(?:e|ior)|concept|topic)\b",
+        r"^\s*(?:what|why|how)\b.{0,120}\b(?:work|works|mean|means|behav(?:e|ior)|concept|topic)\b.{0,80}\b(?:sub[- ]?agents?|orchestrat(?:or|ion|e))\b",
     )),
 )
 
@@ -203,6 +216,13 @@ def classify(prompt: str) -> tuple[str, str]:
 
     complex_score, complex_hits = count_signals(text, COMPLEX_SIGNALS)
     simple_score, simple_hits = count_signals(text, SIMPLE_SIGNALS)
+    educational_score, educational_hits = count_signals(text, EDUCATIONAL_TOPIC_SIGNALS)
+
+    if educational_score and has_only_topic_complex_hits(complex_hits):
+        return (
+            "single-thread-likely",
+            format_signal_reason("Educational subagent-topic prompt detected", educational_hits),
+        )
 
     if complex_score >= 5 and complex_score > simple_score + 1:
         return (
