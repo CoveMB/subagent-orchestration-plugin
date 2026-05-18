@@ -20,6 +20,11 @@ BOUNDARY_SENTENCE = (
     "citation, manuscript, safety, privacy, vendor, approval, or testing rules."
 )
 USER_PROMPT_SUBMIT_OUTPUT_KEYS = {"hookEventName", "additionalContext"}
+CUSTOM_AGENT_SHARED_SAFETY_LINES = (
+    "Host repository rules win. Your output is work product, not evidence by itself.",
+    "Do not invent facts, sources, citekeys, page numbers, quotations, studies, or bibliographic metadata.",
+    "Do not bypass required checks, approvals, scripts, or audit requirements.",
+)
 DECISION_MATRIX_CASES = [
     ("Draft a short note for the changelog.", "single-thread-default"),
     ("How could we create tests that the skill hook makes an appropriate decision?", "single-thread-likely"),
@@ -1213,6 +1218,19 @@ def test_custom_agent_configs_are_valid() -> None:
         missing_keys = required_keys - data.keys()
         assert not missing_keys, (path, missing_keys)
         assert data["sandbox_mode"] in {"read-only", "workspace-write"}, path
+
+
+def test_custom_agent_configs_share_safety_contract() -> None:
+    for path in sorted((ROOT / "custom-agents").glob("*.toml")):
+        instructions = tomllib.loads(path.read_text(encoding="utf-8"))["developer_instructions"]
+        for line in CUSTOM_AGENT_SHARED_SAFETY_LINES:
+            assert line in instructions, (path, line)
+
+
+def test_subagent_config_snippet_matches_project_activation_defaults() -> None:
+    snippet = tomllib.loads((ROOT / "snippets" / "config.subagents.toml").read_text(encoding="utf-8"))
+    assert snippet["agents"]["max_threads"] == 4
+    assert snippet["agents"]["max_depth"] == 1
 
 
 def test_repo_marketplace_paths_exist() -> None:

@@ -21,6 +21,7 @@ from typing import Any
 from file_ops import backup_path, content_matches, next_backup_path, path_exists, remove_path
 from toml_ops import (
     has_non_table_toml_content,
+    line_opens_toml_table,
     read_toml_value,
     remove_toml_table_key,
     set_toml_table_key,
@@ -295,6 +296,31 @@ def link_project_tree(
     return True
 
 
+def copy_project_file(
+    src: Path,
+    dst: Path,
+    repo_root: Path,
+    manifest: dict[str, Any],
+    dry_run: bool,
+    label: str,
+    executable: bool = False,
+    dry_run_verb: str = "copy",
+    installed_verb: str = "copied",
+) -> None:
+    if dry_run:
+        if path_exists(dst) and not is_manifest_owned(manifest, repo_root, dst):
+            backup_existing_path(dst, repo_root, manifest, True, label)
+        print(f"would {dry_run_verb} {label}: {src} -> {dst}")
+        return
+    prepare_project_destination(dst, repo_root, manifest, False, label)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    if executable:
+        dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    record_installed_path(manifest, repo_root, dst)
+    print(f"{installed_verb} {label}: {dst}")
+
+
 def write_project_text(
     path: Path,
     text: str,
@@ -496,17 +522,17 @@ def install_project_hook(
         return
 
     src = source_root / "hooks" / HOOK_FILE_NAME
-    if dry_run:
-        if path_exists(dst) and not is_manifest_owned(manifest, repo_root, dst):
-            backup_existing_path(dst, repo_root, manifest, True, "project hook")
-        print(f"would install project hook: {src} -> {dst}")
-        return
-    prepare_project_destination(dst, repo_root, manifest, False, "project hook")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-    dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    record_installed_path(manifest, repo_root, dst)
-    print(f"installed project hook: {dst}")
+    copy_project_file(
+        src,
+        dst,
+        repo_root,
+        manifest,
+        dry_run,
+        "project hook",
+        executable=True,
+        dry_run_verb="install",
+        installed_verb="installed",
+    )
 
 
 def install_project_skills(
@@ -541,16 +567,7 @@ def install_project_agents(
         agents_source_root = ROOT / "custom-agents"
     for src in sorted(agents_source_root.glob("*.toml")):
         dst = repo_root / ".codex" / "agents" / src.name
-        if dry_run:
-            if path_exists(dst) and not is_manifest_owned(manifest, repo_root, dst):
-                backup_existing_path(dst, repo_root, manifest, True, "project agent")
-            print(f"would copy project agent: {src} -> {dst}")
-            continue
-        prepare_project_destination(dst, repo_root, manifest, False, "project agent")
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        record_installed_path(manifest, repo_root, dst)
-        print(f"copied project agent: {dst}")
+        copy_project_file(src, dst, repo_root, manifest, dry_run, "project agent")
 
 
 def marketplace_plugin_entry(repo_root: Path, source_root: Path) -> dict[str, Any]:
@@ -612,6 +629,14 @@ def load_marketplace(path: Path, label: str) -> dict[str, Any]:
     return data
 
 
+def plugins_without_name(plugins: list[dict[str, Any]], name: str) -> list[dict[str, Any]]:
+    return [plugin for plugin in plugins if plugin.get("name") != name]
+
+
+def upsert_plugin_named(plugins: list[dict[str, Any]], entry: dict[str, Any]) -> list[dict[str, Any]]:
+    return plugins_without_name(plugins, entry["name"]) + [entry]
+
+
 def patch_project_marketplace(
     repo_root: Path,
     source_root: Path,
@@ -627,9 +652,7 @@ def patch_project_marketplace(
         manifest["marketplace_previous_plugin"] = previous_plugin
 
     entry = marketplace_plugin_entry(repo_root, source_root)
-    updated_plugins = [plugin for plugin in plugins if plugin.get("name") != PLUGIN_NAME]
-    updated_plugins.append(entry)
-    data["plugins"] = updated_plugins
+    data["plugins"] = upsert_plugin_named(plugins, entry)
     updated_text = json.dumps(data, indent=2) + "\n"
     if updated_text == original_text:
         return
@@ -654,7 +677,7 @@ def restore_project_marketplace(repo_root: Path, manifest: dict[str, Any], dry_r
     original_text = path.read_text(encoding="utf-8")
     data = load_marketplace(path, "repo")
     previous_plugin = manifest.get("marketplace_previous_plugin")
-    plugins = [plugin for plugin in data.get("plugins", []) if plugin.get("name") != PLUGIN_NAME]
+    plugins = plugins_without_name(data.get("plugins", []), PLUGIN_NAME)
     if previous_plugin:
         plugins.append(previous_plugin)
     data["plugins"] = plugins
@@ -844,11 +867,6 @@ def copy_backup(path: Path, dry_run: bool, label: str) -> Path | None:
     return backup_path(path, dry_run, label, move=False)
 
 
-def line_opens_table(line: str) -> bool:
-    stripped = line.strip()
-    return stripped.startswith("[") and stripped.endswith("]")
-
-
 def block_references_hook(block: list[str]) -> bool:
     return any(HOOK_FILE_NAME in line and not line.lstrip().startswith("#") for line in block)
 
@@ -896,7 +914,7 @@ def remove_hook_config_block(text: str) -> str:
 
         block: list[str] = []
         while index < len(lines):
-            if block and line_opens_table(lines[index]) and lines[index].strip() != "[[hooks.UserPromptSubmit.hooks]]":
+            if block and line_opens_toml_table(lines[index]) and lines[index].strip() != "[[hooks.UserPromptSubmit.hooks]]":
                 break
             block.append(lines[index])
             index += 1
@@ -948,7 +966,7 @@ def remove_user_marketplace_entry(dry_run: bool) -> None:
         print(str(exc).removeprefix("error: ") + f"; leaving unchanged: {path}")
         return
     plugins = data.get("plugins", [])
-    remaining_plugins = [plugin for plugin in plugins if plugin.get("name") != PLUGIN_NAME]
+    remaining_plugins = plugins_without_name(plugins, PLUGIN_NAME)
     if remaining_plugins == plugins:
         print(f"no owned marketplace entry found: {path}")
         return

@@ -19,6 +19,13 @@ def line_opens_toml_table(line: str) -> bool:
     return stripped.startswith("[") and stripped.endswith("]")
 
 
+def line_sets_toml_key(line: str, key: str) -> bool:
+    stripped = line.strip()
+    return not stripped.startswith("#") and (
+        stripped.startswith(f"{key} ") or stripped.startswith(f"{key}=")
+    )
+
+
 def find_table_bounds(lines: list[str], table_name: str) -> tuple[int, int] | None:
     start_index: int | None = None
     for index, line in enumerate(lines):
@@ -47,10 +54,7 @@ def set_toml_table_key(text: str, table_name: str, key: str, value: str) -> str:
 
     start_index, end_index = bounds
     for index in range(start_index + 1, end_index):
-        stripped = lines[index].strip()
-        if stripped.startswith("#"):
-            continue
-        if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+        if line_sets_toml_key(lines[index], key):
             lines[index] = key_line
             return "\n".join(lines).rstrip() + "\n"
     lines.insert(end_index, key_line)
@@ -66,8 +70,7 @@ def remove_toml_table_key(text: str, table_name: str, key: str) -> str:
     output: list[str] = []
     for index, line in enumerate(lines):
         if start_index < index < end_index:
-            stripped = line.strip()
-            if not stripped.startswith("#") and (stripped.startswith(f"{key} ") or stripped.startswith(f"{key}=")):
+            if line_sets_toml_key(line, key):
                 continue
         output.append(line)
     return "\n".join(output).rstrip() + "\n"

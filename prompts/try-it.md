@@ -5,7 +5,7 @@ Use these after installing and restarting Codex.
 ## Explicit skill invocation
 
 ```text
-@subagent-orchestrator
+$subagent-orchestrator
 Evaluate this task first. Decide whether it should be single-thread, sequential-plan, or parallel-subagents, then proceed accordingly:
 
 Find why the login flow flakes in CI and propose the minimal fix.

@@ -24,7 +24,21 @@ snippets/config.subagents.toml
 snippets/config.hooks.*.toml
 marketplace/*.json
 scripts/install_user.py
+scripts/uninstall_user.py
+scripts/grade_skill_traces.py
+scripts/run_live_skill_evals.py
+scripts/check.sh
+scripts/file_ops.py
+scripts/toml_ops.py
+scripts/eval_contract.py
+templates/project_hook_wrapper.py
+evals/skill_prompts.jsonl
+evals/trace_eval.schema.json
+evals/trace_fixtures/
+tests/*.py
+.github/workflows/tests.yml
 install.sh / install.ps1
+uninstall.sh / uninstall.ps1
 ```
 
 ## How this coexists with other workflows
@@ -168,7 +182,7 @@ Optional project-only additions:
 ./install.sh --scope project --append-project-agents-md
 ```
 
-Project scope installs repo-local skills by default. Omit `--activate-gate` to make skills available without activating the prompt gate. Use `--dry-run` to print created, patched, copied, symlinked, and backed-up paths without changing files. Use project uninstall to remove manifest-owned activation files:
+Project scope installs repo-local skills by default. Omit `--activate-gate` to make skills available without activating the prompt gate. Use `--dry-run` to print created, patched, copied, symlinked, and backed-up paths without changing files. Use project uninstall to remove manifest-owned project install files:
 
 ```bash
 ./install.sh --scope project --repo-root /path/to/repo --uninstall
@@ -276,7 +290,7 @@ GitHub Actions runs on pushes to `main` and pull requests with Python 3.11. The 
 - `tests/test_hook.py` for installer, hook classifier, snippet/config, marketplace, and CI wiring checks,
 - `tests/test_skills.py` for skill frontmatter, manifest, decision taxonomy, boundary, and spawn-contract checks,
 - `tests/test_evals.py` for prompt corpus, offline grader, realistic trace fixture, rubric, and profile checks,
-- `tests/test_live_evals.py` for live harness behavior using fake Codex binaries and all supported harness flags,
+- `tests/test_live_evals.py` for live harness behavior using fake Codex binaries and important supported harness modes and flags,
 - `python3 -m compileall -q hooks scripts tests` for syntax coverage.
 
 The CI suite verifies the live harness and trace grader, but real live Codex sessions stay outside CI because they require a local Codex runtime, profile configuration, and optional subagent/tool availability.

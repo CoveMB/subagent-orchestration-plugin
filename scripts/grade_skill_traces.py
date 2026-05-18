@@ -11,15 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DECISION_RE = re.compile(r"\bResult:\s*([a-z-]+)\b")
-EXPECTED_DECISIONS = (
-    "single-thread-default",
-    "single-thread-likely",
-    "orchestration-check",
-    "use-subagent-orchestrator",
-    "orchestration-opt-out",
-    "recursion-guard",
-)
+from eval_contract import CUSTOM_AGENT_NAMES, DECISION_RE, EXPECTED_DECISIONS
+
 REQUIRED_CASE_KEYS = (
     "id",
     "prompt",
@@ -77,15 +70,6 @@ COMMAND_ITEM_TYPES = {"command_execution"}
 AGENT_TYPE_KEYS = ("agent_type", "agent", "agent_name")
 SPAWN_PROMPT_KEYS = ("prompt", "message", "task", "instructions")
 AGENT_TYPE_LABEL_RE = re.compile(r"(?im)^\s*agent_type:\s*(so_[a-z_]+)\s*$")
-CUSTOM_AGENT_NAMES = (
-    "so_mapper",
-    "so_reviewer",
-    "so_tester",
-    "so_reproducer",
-    "so_docs_researcher",
-    "so_designer",
-    "so_implementer",
-)
 VALID_RUBRIC_IDS = {
     "boundary",
     "conditional_boundary",

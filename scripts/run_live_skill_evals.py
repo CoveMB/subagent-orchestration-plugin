@@ -3,20 +3,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+from eval_contract import DECISION_RE
 from grade_skill_traces import grade, load_jsonl, validate_cases
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROMPTS = ROOT / "evals" / "skill_prompts.jsonl"
 HOOK = ROOT / "hooks" / "subagent_orchestration_gate.py"
 HOOK_MODE_CONTRACT = "contract"
-DECISION_RE = re.compile(r"\bResult:\s*([a-z-]+)\b")
 SPAWN_CONTRACT_CONTEXT = "\n".join([
     "Contract mode: live-eval spawn contract.",
     "When using parallel subagents, define bounded roles before the first spawn.",

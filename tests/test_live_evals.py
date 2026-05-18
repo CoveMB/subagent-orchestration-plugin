@@ -15,155 +15,86 @@ def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     path.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="utf-8")
 
 
-def write_fake_codex(path: Path) -> None:
+def write_executable_python(path: Path, body_lines: list[str]) -> None:
     path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json",
-                "import sys",
-                "prompt = sys.argv[-1]",
-                "decision = 'single-thread-likely' if 'repository' in prompt else 'single-thread-default'",
-                "event = {",
-                "    'type': 'item.completed',",
-                "    'item': {",
-                "        'type': 'message',",
-                "        'content': [{'type': 'output_text', 'text': f'Subagent orchestration gate\\nResult: {decision}\\nReason: Fake live trace.'}],",
-                "    },",
-                "}",
-                "print(json.dumps(event))",
-            ]
-        )
-        + "\n",
+        "\n".join(["#!/usr/bin/env python3", "from __future__ import annotations", *body_lines]) + "\n",
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | 0o111)
+
+
+def message_event_lines(python_text_expression: str) -> list[str]:
+    return [
+        "event = {",
+        "    'type': 'item.completed',",
+        "    'item': {",
+        "        'type': 'message',",
+        f"        'content': [{{'type': 'output_text', 'text': {python_text_expression}}}],",
+        "    },",
+        "}",
+        "print(json.dumps(event))",
+    ]
+
+
+def write_fake_codex(path: Path) -> None:
+    write_executable_python(path, [
+        "import json",
+        "import sys",
+        "prompt = sys.argv[-1]",
+        "decision = 'single-thread-likely' if 'repository' in prompt else 'single-thread-default'",
+        *message_event_lines("f'Subagent orchestration gate\\nResult: {decision}\\nReason: Fake live trace.'"),
+    ])
 
 
 def write_selective_timeout_fake_codex(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json",
-                "import sys",
-                "import time",
-                "prompt = sys.argv[-1]",
-                "if 'repository' in prompt:",
-                "    time.sleep(2)",
-                "decision = 'single-thread-likely' if 'repository' in prompt else 'single-thread-default'",
-                "event = {",
-                "    'type': 'item.completed',",
-                "    'item': {",
-                "        'type': 'message',",
-                "        'content': [{'type': 'output_text', 'text': f'Subagent orchestration gate\\nResult: {decision}\\nReason: Fake live trace.'}],",
-                "    },",
-                "}",
-                "print(json.dumps(event))",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    path.chmod(path.stat().st_mode | 0o111)
+    write_executable_python(path, [
+        "import json",
+        "import sys",
+        "import time",
+        "prompt = sys.argv[-1]",
+        "if 'repository' in prompt:",
+        "    time.sleep(2)",
+        "decision = 'single-thread-likely' if 'repository' in prompt else 'single-thread-default'",
+        *message_event_lines("f'Subagent orchestration gate\\nResult: {decision}\\nReason: Fake live trace.'"),
+    ])
 
 
 def write_command_heavy_fake_codex(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json",
-                "for index in range(6):",
-                "    command = f'echo command-{index}'",
-                "    event = {'type': 'item.completed', 'item': {'id': f'item_{index}', 'type': 'command_execution', 'command': command}}",
-                "    print(json.dumps(event))",
-                "event = {'type': 'item.completed', 'item': {'type': 'message', 'content': [{'type': 'output_text', 'text': 'Subagent orchestration gate\\nResult: single-thread-likely\\nReason: Fake live trace.'}]}}",
-                "print(json.dumps(event))",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    path.chmod(path.stat().st_mode | 0o111)
+    write_executable_python(path, [
+        "import json",
+        "for index in range(6):",
+        "    command = f'echo command-{index}'",
+        "    event = {'type': 'item.completed', 'item': {'id': f'item_{index}', 'type': 'command_execution', 'command': command}}",
+        "    print(json.dumps(event))",
+        *message_event_lines("'Subagent orchestration gate\\nResult: single-thread-likely\\nReason: Fake live trace.'"),
+    ])
 
 
 def write_cwd_reporting_fake_codex(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json",
-                "from pathlib import Path",
-                "agents_text = Path('AGENTS.md').read_text(encoding='utf-8') if Path('AGENTS.md').exists() else ''",
-                "event = {",
-                "    'type': 'item.completed',",
-                "    'item': {",
-                "        'type': 'message',",
-                "        'content': [{'type': 'output_text', 'text': 'AGENTS:' + agents_text}],",
-                "    },",
-                "}",
-                "print(json.dumps(event))",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    path.chmod(path.stat().st_mode | 0o111)
+    write_executable_python(path, [
+        "import json",
+        "from pathlib import Path",
+        "agents_text = Path('AGENTS.md').read_text(encoding='utf-8') if Path('AGENTS.md').exists() else ''",
+        *message_event_lines("'AGENTS:' + agents_text"),
+    ])
 
 
 def write_env_reporting_fake_codex(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json",
-                "import os",
-                "mode = os.environ.get('SUBAGENT_ORCHESTRATION_GATE_MODE', '')",
-                "event = {",
-                "    'type': 'item.completed',",
-                "    'item': {",
-                "        'type': 'message',",
-                "        'content': [{'type': 'output_text', 'text': 'HOOK_MODE:' + mode}],",
-                "    },",
-                "}",
-                "print(json.dumps(event))",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    path.chmod(path.stat().st_mode | 0o111)
+    write_executable_python(path, [
+        "import json",
+        "import os",
+        "mode = os.environ.get('SUBAGENT_ORCHESTRATION_GATE_MODE', '')",
+        *message_event_lines("'HOOK_MODE:' + mode"),
+    ])
 
 
 def write_prompt_reporting_fake_codex(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json",
-                "import sys",
-                "prompt = sys.argv[-1]",
-                "event = {",
-                "    'type': 'item.completed',",
-                "    'item': {",
-                "        'type': 'message',",
-                "        'content': [{'type': 'output_text', 'text': 'PROMPT:' + prompt}],",
-                "    },",
-                "}",
-                "print(json.dumps(event))",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    path.chmod(path.stat().st_mode | 0o111)
+    write_executable_python(path, [
+        "import json",
+        "import sys",
+        "prompt = sys.argv[-1]",
+        *message_event_lines("'PROMPT:' + prompt"),
+    ])
 
 
 def run_live_runner(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
