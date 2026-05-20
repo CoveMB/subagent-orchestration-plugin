@@ -17,6 +17,7 @@ plugin/subagent-orchestrator/
   skills/using-subagent-orchestrator/SKILL.md
   skills/subagent-orchestrator/SKILL.md
 
+docs/skill-usage-examples.md
 hooks/subagent_orchestration_gate.py
 custom-agents/*.toml
 snippets/AGENTS.subagent-orchestration.md
@@ -40,6 +41,9 @@ tests/*.py
 install.sh / install.ps1
 uninstall.sh / uninstall.ps1
 ```
+
+Examples for both included skills live in
+[`docs/skill-usage-examples.md`](docs/skill-usage-examples.md).
 
 ## How this coexists with other workflows
 
