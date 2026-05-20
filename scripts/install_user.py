@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the subagent orchestration starter kit.
+"""Install the subagent orchestration skill plugin.
 
 Default behavior is conservative:
 - user scope installs direct skills only
@@ -35,7 +35,7 @@ PLUGIN_NAME = "subagent-orchestrator"
 USING_SKILL_NAME = "using-subagent-orchestrator"
 HOOK_FILE_NAME = "subagent_orchestration_gate.py"
 PROJECT_MANIFEST_NAME = "subagent-orchestrator-install.json"
-PROJECT_VENDOR_PATH = Path("vendor") / "subagent-orchestration-plugin"
+PROJECT_VENDOR_PATH = Path("vendor") / "subagent-orchestration-skill-plugin"
 MANAGED_CONFIG_START = "# BEGIN subagent-orchestrator project gate"
 MANAGED_CONFIG_END = "# END subagent-orchestrator project gate"
 MANAGED_AGENTS_START = "<!-- BEGIN subagent-orchestrator project guidance -->"

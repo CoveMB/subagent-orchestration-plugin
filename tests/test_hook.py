@@ -257,7 +257,7 @@ def project_manifest_path(repo: Path) -> Path:
 
 
 def prepare_vendored_plugin(repo: Path) -> Path:
-    vendor_root = repo / "vendor" / "subagent-orchestration-plugin"
+    vendor_root = repo / "vendor" / "subagent-orchestration-skill-plugin"
     shutil.copytree(ROOT / "plugin", vendor_root / "plugin")
     shutil.copytree(ROOT / "hooks", vendor_root / "hooks")
     return vendor_root
@@ -642,7 +642,7 @@ def test_project_repo_marketplace_writes_vendored_plugin_path() -> None:
             "name": "subagent-orchestrator",
             "source": {
                 "source": "local",
-                "path": "./vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator",
+                "path": "./vendor/subagent-orchestration-skill-plugin/plugin/subagent-orchestrator",
             },
             "policy": {
                 "installation": "AVAILABLE",

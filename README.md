@@ -1,6 +1,6 @@
 # Subagent Orchestration for Codex
 
-This starter kit gives Codex a quiet, compatibility-oriented orchestration gate:
+This skill plugin gives Codex a quiet, compatibility-oriented orchestration gate:
 
 - every prompt is classified internally and receives compact result/reason metadata,
 - existing orchestration, routing, bootstrap, skill-selection, and agent-management frameworks take priority,
@@ -43,7 +43,7 @@ uninstall.sh / uninstall.ps1
 
 ## How this coexists with other workflows
 
-Superpowers and other workflow systems should keep priority. This kit does not replace them and does not ask the user whether orchestration is preferable on every prompt.
+Superpowers and other workflow systems should keep priority. This plugin does not replace them and does not ask the user whether orchestration is preferable on every prompt.
 
 For Codex, the quiet behavior comes from three layers together:
 
@@ -195,10 +195,10 @@ Project-scoped activation affects only Codex sessions opened from that trusted p
 If the plugin is vendored into a repository, prefer symlinked skills:
 
 ```bash
-./vendor/subagent-orchestration-plugin/install.sh \
+./vendor/subagent-orchestration-skill-plugin/install.sh \
   --scope project \
   --repo-root "$(git rev-parse --show-toplevel)" \
-  --from-vendor "$(git rev-parse --show-toplevel)/vendor/subagent-orchestration-plugin" \
+  --from-vendor "$(git rev-parse --show-toplevel)/vendor/subagent-orchestration-skill-plugin" \
   --activate-gate \
   --link-skills
 ```
@@ -207,10 +207,10 @@ This links:
 
 ```text
 .agents/skills/using-subagent-orchestrator
-  -> vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator/skills/using-subagent-orchestrator
+  -> vendor/subagent-orchestration-skill-plugin/plugin/subagent-orchestrator/skills/using-subagent-orchestrator
 
 .agents/skills/subagent-orchestrator
-  -> vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator/skills/subagent-orchestrator
+  -> vendor/subagent-orchestration-skill-plugin/plugin/subagent-orchestrator/skills/subagent-orchestrator
 ```
 
 If symlinks fail, the installer falls back to copying. Omit `--link-skills` to use copies.
@@ -222,7 +222,7 @@ The repo marketplace option adds or updates `.agents/plugins/marketplace.json` w
   "name": "subagent-orchestrator",
   "source": {
     "source": "local",
-    "path": "./vendor/subagent-orchestration-plugin/plugin/subagent-orchestrator"
+    "path": "./vendor/subagent-orchestration-skill-plugin/plugin/subagent-orchestrator"
   },
   "policy": {
     "installation": "AVAILABLE",

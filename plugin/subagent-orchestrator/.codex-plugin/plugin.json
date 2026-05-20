@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Optional Codex execution-shape helper for choosing single-thread, sequential, or bounded parallel subagent work when orchestration is explicitly requested or clearly valuable.",
   "author": {
-    "name": "Cove / local starter kit"
+    "name": "CoveMB"
   },
   "license": "MIT",
   "keywords": ["subagents", "orchestration", "skills", "codex", "superpowers-style"],
@@ -12,7 +12,7 @@
     "displayName": "Subagent Orchestrator",
     "shortDescription": "Optional helper for deciding when subagent orchestration adds value.",
     "longDescription": "A lightweight execution-shape helper for Codex. It keeps existing workflow systems and repository instructions ahead of orchestration, while avoiding subagents for simple tasks.",
-    "developerName": "Local starter kit",
+    "developerName": "CoveMB",
     "category": "Coding",
     "capabilities": ["Read", "Write"],
     "defaultPrompt": [
